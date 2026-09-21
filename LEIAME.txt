@@ -1,0 +1,157 @@
+===========================================================================
+  ATUALIZA ARRECADACAO
+  Da folha de pagamento em PDF para o layout de importacao do SISPREVWEB
+===========================================================================
+
+COMO USAR
+---------
+
+1. Abra o AtualizaArrecadacao.exe.
+
+2. Em "1 - Folha de pagamento", anexe o PDF da folha (ou arraste o arquivo
+   para a area tracejada) e clique em LER A FOLHA.
+
+   Serve a folha mensal, a de rescisao e a de 13o salario.
+
+3. Confira a competencia. O programa le o ano e o mes do cabecalho do PDF.
+   A folha de 13o salario vira MES 13 automaticamente -- e o que o layout
+   pede. Os dois campos continuam editaveis, para o caso de um cabecalho
+   que o programa nao consiga ler.
+
+4. Confira o MUNICIPIO, ao lado da categoria. Ele vem do cabecalho do PDF
+   e e ele que diz contra qual catalogo as fontes vao casar.
+
+   ANTES DA PRIMEIRA FOLHA DE CADA MUNICIPIO: va em "Fontes pagadoras",
+   escolha o municipio e clique em IMPORTAR ARQUIVO. O arquivo e o que o
+   SISPREVWEB exporta, .csv ou .xlsx, com as colunas FONTE_PAG_ID e NOME.
+   Ele substitui o catalogo daquele municipio e fica gravado.
+
+5. Se sobrar alguma fonte sem codigo, aparece na tela da folha, logo abaixo
+   da competencia, o cartao "Fontes pagadoras" com uma linha para cada uma
+   e o motivo:
+
+     "mais de uma fonte com este numero" -- o catalogo tem mais de um
+     codigo com aquele numero. Escolha na lista qual e.
+
+     "numero nao existe no catalogo" -- fonte nova, que ainda nao foi
+     exportada. Digite o codigo.
+
+   A marca amarela vira verde e a tabela se corrige na hora. Quando a
+   ultima e resolvida o cartao sai da tela sozinho, e a tabela fica com o
+   espaco inteiro. O que voce escolher fica gravado para as folhas
+   seguintes daquele municipio.
+
+6. Confira a tabela. Clique num titulo para ordenar, botao direito para
+   filtrar. Linha em VERMELHO tem pendencia e provavelmente sera recusada
+   na importacao.
+
+7. Escolha o modelo do layout e clique em EXPORTAR.
+
+
+OS DOIS MODELOS
+---------------
+
+  Simplificado - 10 campos  (padrao)
+      Matricula; Nome; Ano; Mes; Remuneracao de contribuicao;
+      Contribuicao do segurado; Patronal normal; Patronal custo especial;
+      Fonte pagadora; Categoria
+
+  Reduzido - 8 campos
+      O mesmo, SEM as duas colunas de patronal.
+
+Na duvida, use o de 10 campos: e o que esta no documento LAYOUT DE
+IMPORTACAO / MODULO DE ARRECADACAO, e la todos os campos sao obrigatorios.
+O de 8 campos existe porque circula uma versao do layout sem os patronais.
+
+Mandar 8 colunas onde o importador espera 10 faz a fonte pagadora cair na
+coluna do patronal -- o arquivo ou e recusado, ou entra torto.
+
+
+XLSX OU CSV
+-----------
+
+  XLSX  para CONFERIR. Vai com titulos, com os valores como numero de
+        verdade (somar a coluna no Excel bate com o total da folha) e com
+        uma aba "Resumo" que registra de qual PDF o arquivo saiu, de qual
+        municipio e de onde veio o codigo de cada fonte pagadora.
+
+  CSV   para IMPORTAR. Vai sem titulos, separado por ponto-e-virgula, com
+        decimal em virgula.
+
+O nome sugerido ja vem com municipio, competencia e tipo:
+
+  Arrecadacao_Aripuana_2026-08_Mensal.csv
+  Arrecadacao_BaraoDeMelgaco_2026-08_Rescisao.xlsx
+
+Nao entra a data de geracao: gerar o mesmo mes duas vezes da o mesmo nome,
+e substitui o anterior em vez de acumular copia.
+
+
+O QUE O PROGRAMA NAO FAZ
+------------------------
+
+* Nao le folha digitalizada. Ele usa o texto embutido no PDF; se a folha
+  for imagem, a tela avisa quais paginas ficaram de fora em vez de
+  exportar valores incompletos.
+
+* Nao inventa o codigo da fonte pagadora. A folha diz a fonte pelo nome
+  ("2 - 1 - 2002 -GABINETE EFETIVOS F 1.500"); o codigo de integracao
+  (5085) vive no SISPREVWEB. O programa casa os dois pelo numero e pelo
+  nome, e o que nao casar com CERTEZA ele pergunta, em vez de escolher o
+  parecido. Um codigo errado nao derruba a importacao -- ele credita a
+  contribuicao na fonte errada, e isso so aparece na conciliacao.
+
+* Nao adivinha o municipio do arquivo de fontes. Sao 29 prefeituras e os
+  nomes das fontes se repetem entre elas; o arquivo nao diz de qual ele e.
+  Por isso o municipio e escolhido na tela antes de importar.
+
+* Nao soma consignacao como previdencia. O desconto previdenciario e
+  reconhecido pela descricao da verba, e nao pela faixa de codigo:
+  8850, 8851, 8857, 8873, 8844 e 8847 sao previdencia; 8859, 8865, 8866
+  e 8871 sao emprestimo de banco e ficam de fora.
+
+* Quem tem mais de um desconto previdenciario no mes (auxilio-doenca no
+  meio do mes, ferias) tem os dois SOMADOS numa linha so. A coluna
+  "Verbas" da tabela mostra quais foram somados.
+
+* Nao exporta o total de proventos. "Remuneracao de contribuicao" e a base
+  do desconto previdenciario, e e menor que o total de proventos da folha:
+  na folha mensal de 08/2026 sao 4.126.327,68 contra 4.767.480,36 de
+  proventos. A diferenca sao verbas que nao entram na base -- aulas
+  excedentes, horas extras, 1/3 de ferias, insalubridade, gratificacoes --
+  e quem tem cargo efetivo exercendo comissionado, que contribui sobre o
+  vencimento do efetivo. Cada base esta na coluna "Base" da propria verba
+  de previdencia, no PDF.
+
+  Os dois numeros aparecem lado a lado na tela, com a conta escrita logo
+  abaixo. Passe o mouse sobre "total de proventos" para ver a explicacao
+  inteira. Ela tambem sai na aba "Resumo" do XLSX.
+
+
+ONDE FICAM AS COISAS
+--------------------
+
+  Exportacoes       na pasta escolhida em "Exportacoes" (por padrao,
+                    Documentos\AtualizaArrecadacao)
+  Catalogo e log    %LOCALAPPDATA%\AtualizaArrecadacao
+                    (catalogo_fontes.json)
+
+O catalogo de fontes pagadoras NAO fica ao lado do programa: a pasta do
+programa e substituida inteira a cada versao nova, e o cadastro se
+perderia na primeira atualizacao.
+
+
+SE ALGO DER ERRADO
+------------------
+
+  AtualizaArrecadacao.exe --autoteste
+
+Confere as bibliotecas e o caminho folha -> layout -> CSV, e escreve o
+resultado em autoteste.log, ao lado do executavel. Mande esse arquivo
+junto com o relato.
+
+Os logs de cada abertura ficam em %LOCALAPPDATA%\AtualizaArrecadacao\logs.
+
+===========================================================================
+  Agenda Assessoria Planejamento e Informatica Ltda
+===========================================================================

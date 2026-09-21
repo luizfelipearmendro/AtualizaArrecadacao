@@ -1,0 +1,57 @@
+# ---------------------------------------------------------------------------
+# Dados de trabalho - NUNCA versionar.
+# A folha de pagamento e as exportacoes contem dados pessoais (CPF, nome,
+# matricula, remuneracao) de servidores publicos.
+# ---------------------------------------------------------------------------
+arquivos/
+arquivos_base/
+Arrecadacao_*
+*.xlsx
+*.xlsm
+*.xls
+*.csv
+*.pdf
+*.doc
+*.docx
+
+# O de/para das fontes pagadoras mora em %LOCALAPPDATA%, mas uma copia pode
+# acabar aqui durante um teste.
+fontes_pagadoras.json
+
+# ---------------------------------------------------------------------------
+# Build do executavel (o .exe vai nas Releases, nao no repositorio)
+# ---------------------------------------------------------------------------
+dist/
+build/
+*.spec
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---------------------------------------------------------------------------
+# Editores e sistema
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+~$*
+
+# ---------------------------------------------------------------------------
+# Execucao
+# ---------------------------------------------------------------------------
+logs/
+autoteste.log
+relatorios.json

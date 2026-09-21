@@ -1,0 +1,3 @@
+# Alem das bibliotecas de execucao, o necessario para gerar o .exe.
+-r requirements.txt
+pyinstaller>=6.6

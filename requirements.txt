@@ -1,0 +1,10 @@
+# Bibliotecas do AtualizaArrecadacao.
+# Instalar com:  python -m pip install -r requirements.txt
+
+PyMuPDF>=1.24        # leitura do PDF da folha, com as coordenadas de cada palavra
+openpyxl>=3.1        # gravacao do .xlsx de conferencia
+
+# Arrastar e soltar o PDF na janela. OPCIONAL de verdade: sem ele o programa
+# abre igual e o botao PROCURAR continua funcionando -- `casca.arrastar` trata
+# a ausencia e o autoteste a reporta como "ausente (opcional)".
+tkinterdnd2>=0.4
