@@ -74,12 +74,6 @@ class Verba:
         """
         return self.tipo == "D" and "PREVIDENCIA" in _caixa_alta_sem_acento(self.descricao)
 
-    @property
-    def e_base_patronal(self) -> bool:
-        """A verba de nota que traz a parte patronal normal (coluna 07)."""
-        texto = _caixa_alta_sem_acento(self.descricao)
-        return self.tipo == "N" and "PATRONAL" in texto
-
 
 @dataclass
 class Segurado:
@@ -144,12 +138,6 @@ class Segurado:
         return round(sum(v.valor or 0.0 for v in self.verbas if v.tipo == "P"), 2)
 
     @property
-    def patronal_normal(self) -> float:
-        """Coluna 07 do modelo completo: a parte patronal normal."""
-        return round(sum(v.valor or 0.0 for v in self.verbas
-                         if v.e_base_patronal), 2)
-
-    @property
     def tem_previdencia(self) -> bool:
         return bool(self.verbas_previdencia)
 
@@ -193,10 +181,6 @@ class Folha:
     @property
     def total_contribuicao(self) -> float:
         return round(sum(s.contribuicao_do_segurado for s in self.segurados), 2)
-
-    @property
-    def total_patronal(self) -> float:
-        return round(sum(s.patronal_normal for s in self.segurados), 2)
 
     @property
     def sem_previdencia(self) -> List[Segurado]:

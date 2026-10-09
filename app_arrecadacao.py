@@ -103,10 +103,11 @@ def autoteste() -> int:
         segurado = Segurado(
             matricula="9999", nome="FULANO DE TAL", estrutura="1.02.001",
             fonte=FonteDaFolha(numero=1, nome="2002 -GABINETE EFETIVOS F 1.500"))
+        # So a previdencia do segurado: a verba de nota "10004 - Base Patronal"
+        # existe na folha, mas nao e lida -- as duas colunas de patronal saem
+        # zeradas (ver `arrecadacao.layout`).
         segurado.verbas = [
             Verba("8850", "PREVIDENCIA MUNICIPAL", "D", base=4810.11,
-                  valor=673.42),
-            Verba("10004", "Base Patronal para RPPS", "N", base=4810.11,
                   valor=673.42),
         ]
         teste = Folha(arquivo="teste.pdf", tipo="Mensal",
@@ -128,7 +129,7 @@ def autoteste() -> int:
             destino = exportacao.gravar_csv(
                 linhas_layout, Path(pasta) / "t.csv", layout.MODELO_COMPLETO)
             texto = destino.read_text(encoding="utf-8-sig").strip()
-        esperado = "9999;FULANO DE TAL;2026;8;4810,11;673,42;673,42;0,00;1001;Efetivo"
+        esperado = "9999;FULANO DE TAL;2026;8;4810,11;673,42;0,00;0,00;1001;Efetivo"
         if texto != esperado:
             raise AssertionError("CSV inesperado:\n  {}\n  {}".format(
                 texto, esperado))

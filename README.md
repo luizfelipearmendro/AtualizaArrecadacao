@@ -46,14 +46,27 @@ Do documento *LAYOUT DE IMPORTAÇÃO / MÓDULO DE ARRECADAÇÃO*, modelo
 | 04 | Mês | idem — **13** quando o subtítulo é `(13º salário)` |
 | 05 | Remuneração de Contribuição | soma da coluna *Base* das verbas de previdência — **não** é o total de proventos; ver abaixo |
 | 06 | Contribuição Previdenciária – Segurado | soma da coluna *Valor* das mesmas verbas |
-| 07 | Patronal Normal | verba `10004 - Base Patronal para RPPS` |
-| 08 | Patronal Custo Especial | `0,00` — não existe nesta folha |
+| 07 | Patronal Normal | `0,00` — não é coletado da folha; ver abaixo |
+| 08 | Patronal Custo Especial | `0,00` — idem |
 | 09 | Identificador da Fonte Pagadora | catálogo do SISPREVWEB, casado pelo cabeçalho de fonte da folha |
 | 10 | Categoria | `Efetivo` |
 
 O modelo **reduzido**, de 8 campos, é o mesmo sem as colunas 07 e 08 (a fonte
 pagadora e a categoria passam a ser 07 e 08). A escolha é feita na tela, antes
 de exportar.
+
+### Os dois patronais vão zerados
+
+Por decisão de quem recolhe: o arquivo leva o que o **segurado** contribuiu, e
+a parte do empregador é apurada fora daqui. As colunas continuam no arquivo,
+com `0,00` — o campo é obrigatório e o importador conta posição, então tirá-las
+faria a fonte pagadora cair na coluna do patronal.
+
+A folha até traz a verba de nota `10004 - Base Patronal para RPPS`, e o
+programa já a somou na coluna 07. Voltar a ler dali é trocar a constante
+`PATRONAL_NORMAL` em `arrecadacao/layout.py` por `segurado.patronal_normal` —
+o código que fazia isso está no histórico do git. Custo especial nunca existiu
+nesta folha: é um aporte de plano de amortização.
 
 ### Remuneração de contribuição ≠ total de proventos
 

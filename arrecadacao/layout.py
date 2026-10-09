@@ -22,10 +22,17 @@ diferenca nao e de gosto: mandar oito colunas onde o importador espera dez faz
 a fonte pagadora cair na coluna do patronal, e o arquivo ou e recusado ou entra
 torto. Quem exporta escolhe, e o nome do modelo aparece na tela.
 
-Os dois patronais saem da propria folha: a verba de nota "10004 - Base Patronal
-para RPPS" e a parte normal. **Custo especial nao existe nesta folha** e sai
-zero -- e um aporte de plano de amortizacao, que quando houver vira verba
-propria e entra aqui.
+**Os dois patronais saem ZERADOS**, por decisao de quem recolhe. O programa
+nao os le da folha: o que vai no arquivo e o que o segurado contribuiu, e a
+parte do empregador e apurada fora daqui. A folha ate traz a verba de nota
+"10004 - Base Patronal para RPPS", e o programa ja a somou na coluna 07 --
+voltar a ler dali e trocar a constante abaixo por `segurado.patronal_normal`,
+e esta no historico do git. Custo especial nunca existiu nesta folha: e um
+aporte de plano de amortizacao.
+
+As duas colunas continuam no arquivo, com 0,00, porque o campo e obrigatorio e
+o importador conta posicao: suprimi-las faria a fonte pagadora cair na coluna
+do patronal.
 """
 
 from __future__ import annotations
@@ -35,8 +42,9 @@ from typing import Callable, Dict, List, Optional, Sequence
 
 from .folha import CATEGORIA_PADRAO, Competencia, Folha, Segurado
 
-# Custo especial: a folha nao tem verba para ele. Zero explicito, e nao coluna
-# vazia -- o campo e obrigatorio e numerico.
+# As duas colunas de patronal. Zero explicito, e nao coluna vazia -- o campo e
+# obrigatorio e numerico. Ver o cabecalho do modulo.
+PATRONAL_NORMAL = 0.0
 PATRONAL_CUSTO_ESPECIAL = 0.0
 
 
@@ -158,7 +166,7 @@ def montar(folha: Folha, codigo_da_fonte: Callable[[str], str],
             mes=alvo.mes if alvo else 0,
             base=segurado.base_de_contribuicao,
             segurado=segurado.contribuicao_do_segurado,
-            patronal=segurado.patronal_normal,
+            patronal=PATRONAL_NORMAL,
             especial=PATRONAL_CUSTO_ESPECIAL,
             fonte=codigo,
             categoria=categoria,

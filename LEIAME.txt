@@ -114,6 +114,12 @@ O QUE O PROGRAMA NAO FAZ
   meio do mes, ferias) tem os dois SOMADOS numa linha so. A coluna
   "Verbas" da tabela mostra quais foram somados.
 
+* Nao coleta os dois patronais. "Patronal normal" e "Patronal custo
+  especial" saem SEMPRE 0,00, por decisao de quem recolhe: o arquivo leva o
+  que o segurado contribuiu, e a parte do empregador e apurada fora daqui.
+  As duas colunas continuam no arquivo porque o importador conta posicao --
+  tirar as duas faria a fonte pagadora cair na coluna do patronal.
+
 * Nao exporta o total de proventos. "Remuneracao de contribuicao" e a base
   do desconto previdenciario, e e menor que o total de proventos da folha:
   na folha mensal de 08/2026 sao 4.126.327,68 contra 4.767.480,36 de

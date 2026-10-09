@@ -151,7 +151,12 @@ def _aba_de_resumo(livro, linhas: Sequence[Linha], modelo: str,
     escrever("Verbas que não compõem a base", round(proventos - base, 2))
     escrever("Remuneração de contribuição", base)
     escrever("Contribuição do segurado", round(sum(l.segurado for l in linhas), 2))
-    escrever("Patronal normal", round(sum(l.patronal for l in linhas), 2))
+    # Dito, e nao calculado: as duas colunas de patronal saem zeradas por
+    # decisao de quem recolhe, e somar uma coluna de zeros nao responde nada.
+    # Quem abrir esta planilha daqui a tres meses vai estranhar os zeros, e e
+    # esta linha que explica.
+    escrever("Patronal normal e custo especial",
+             "0,00 — não são coletados da folha")
 
     # De onde saiu o codigo de cada fonte. Sem isto, conferir meses depois por
     # que uma contribuicao caiu numa fonte exige reabrir o PDF e o catalogo: a
