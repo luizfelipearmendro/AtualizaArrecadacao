@@ -107,13 +107,15 @@ class TelaFontes(Tela):
              tamanho=14).pack(side="left", padx=(0, 12))
         texto = tk.Label(
             exigencia.corpo,
-            text="O arquivo precisa ser .csv ou .xlsx e ter duas colunas, com "
-                 "estes nomes na primeira linha:\n"
+            text="Traga o arquivo como o SISPREVWEB exporta, .csv ou .xlsx — "
+                 "não precisa apagar coluna nenhuma.\n"
+                 "Destas duas é que o programa precisa, e é pelo nome na "
+                 "primeira linha que ele as acha:\n"
                  "      FONTE_PAG_ID  —  o código de integração (5085)\n"
                  "      NOME  —  o nome da fonte (001 - 2002 -GABINETE "
                  "EFETIVOS F 1.500)\n"
-                 "A ordem das colunas não importa; outras colunas são "
-                 "ignoradas.",
+                 "As outras (ORGAO_ID, CODIGO_CLIENTE, AFASTADOS…) são "
+                 "ignoradas, e a ordem não importa.",
             bg=COR_CARTAO, fg=COR_MUDO, font=fonte(T_LEGENDA), anchor="w",
             justify="left")
         texto.pack(side="left", fill="x", expand=True)

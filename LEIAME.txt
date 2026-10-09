@@ -22,8 +22,13 @@ COMO USAR
    e e ele que diz contra qual catalogo as fontes vao casar.
 
    ANTES DA PRIMEIRA FOLHA DE CADA MUNICIPIO: va em "Fontes pagadoras",
-   escolha o municipio e clique em IMPORTAR ARQUIVO. O arquivo e o que o
-   SISPREVWEB exporta, .csv ou .xlsx, com as colunas FONTE_PAG_ID e NOME.
+   escolha o municipio e clique em IMPORTAR ARQUIVO.
+
+   O arquivo e o que o SISPREVWEB exporta, .csv ou .xlsx, DO JEITO QUE ELE
+   SAI -- nao precisa apagar coluna nenhuma. O programa procura FONTE_PAG_ID
+   e NOME pelo nome na primeira linha e ignora o resto (ORGAO_ID,
+   CODIGO_CLIENTE, AFASTADOS, FONTE_PAG_INATIVO); a ordem nao importa.
+
    Ele substitui o catalogo daquele municipio e fica gravado.
 
 5. Se sobrar alguma fonte sem codigo, aparece na tela da folha, logo abaixo

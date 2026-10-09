@@ -130,8 +130,15 @@ Isso é mais fino que a estrutura ADM: a folha mensal de 08/2026 tem **22
 estruturas e 59 fontes**. Sair por estrutura agrupa fontes diferentes sob o
 mesmo código.
 
-**O catálogo.** O SISPREVWEB exporta o cadastro em duas colunas, `FONTE_PAG_ID`
-e `NOME`; o arquivo (`.csv` ou `.xlsx`) é importado na tela *Fontes pagadoras*,
+**O catálogo.** O SISPREVWEB exporta o cadastro com seis colunas; destas o
+programa usa `FONTE_PAG_ID` e `NOME`, achadas **pelo nome na primeira linha** e
+não pela posição — `ORGAO_ID`, `CODIGO_CLIENTE`, `AFASTADOS` e
+`FONTE_PAG_INATIVO` são ignoradas, e a ordem não importa. O arquivo entra como
+sai do SISPREVWEB, sem ninguém abrir o Excel para apagar coluna. Casar por
+posição seria mais curto e importaria `ORGAO_ID` como código de integração na
+primeira vez que a exportação mudasse de forma.
+
+O arquivo (`.csv` ou `.xlsx`) é importado na tela *Fontes pagadoras*,
 **por município** — são 29 prefeituras e os nomes das fontes se repetem entre
 elas, então importar o arquivo de uma sobre o cadastro de outra casaria tudo
 sem erro nenhum. O município vem escolhido pelo cabeçalho da folha
