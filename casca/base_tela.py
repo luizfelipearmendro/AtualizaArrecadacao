@@ -90,6 +90,31 @@ class Tela:
             self._barra_tela.pack_forget()
             self._tela.yview_moveto(0)
 
+    def repensar_rolagem(self) -> None:
+        """Refaz a conta da rolagem depois de MUDAR o que esta na pagina.
+
+        E' obrigatorio chamar isto, e nao da para confiar no `<Configure>` do
+        corpo: a altura do corpo e DITADA pelo canvas, nao pelos filhos dele.
+        Acrescentar cartoes faz o corpo PEDIR mais, mas nao muda o tamanho que
+        ele tem -- nenhum evento dispara, e a pagina continua decidida pela
+        medida de antes.
+
+        Foi esse o defeito: lida a folha, o corpo passava a pedir 1.240 pixels
+        numa area de 517 e mesmo assim `_precisa_rolar` seguia falso. Sem
+        rolagem, o `pack` resolvia espremendo os ultimos da fila -- a tabela
+        virava 1 pixel e o cartao das fontes aparecia cortado no meio da
+        legenda, dizendo que falta resolver uma fonte e sem a linha para
+        resolve-la. Nos testes nao aparecia porque redimensionar a janela
+        dispara o `<Configure>` do canvas e conserta por acidente.
+
+        Na fila de ociosidade porque quem chama acabou de empacotar coisas: a
+        medida so vale depois de o Tk refazer o arranjo.
+        """
+        try:
+            self.quadro.after_idle(self._ajustar_rolagem)
+        except tk.TclError:
+            pass
+
     def rola_sozinho(self, widget: tk.Misc) -> bool:
         """O ponteiro esta sobre algo que ja rola por conta propria?
 

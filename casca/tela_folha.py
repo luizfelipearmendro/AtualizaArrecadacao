@@ -228,6 +228,7 @@ class TelaFolha(Tela):
             if self.cartao_arquivo.rotulo_legenda is not None:
                 self.cartao_arquivo.rotulo_legenda.configure(
                     text=self._descrever_documentos())
+            self.repensar_rolagem()
             return
 
         self.btn_trocar.pack_forget()
@@ -482,6 +483,16 @@ class TelaFolha(Tela):
             "<Configure>",
             lambda e: self.tela_fontes.itemconfigure(self._janela_fontes,
                                                      width=e.width))
+        # A altura da area acompanha a grade em vez de ser medida uma unica
+        # vez. Medida so na montagem, ela dependia de a janela ja ter
+        # assentado: quando a leitura termina pela fila de eventos do
+        # trabalho -- que e como acontece de verdade, e nao nos testes --, as
+        # linhas ainda nao tem tamanho no instante da medida, a area fica com
+        # 1 pixel e NUNCA MAIS e refeita. O cartao aparecia dizendo "1 de 1
+        # fonte(s) sem codigo" e sem a linha para resolver, que e pior do que
+        # nao aparecer: o usuario ve o aviso e nao tem o que fazer com ele.
+        self.grade_fontes.bind("<Configure>",
+                               lambda _e: self._medir_lista_fontes(), add="+")
 
     # ------------------------------------------------------------------ #
     # passo 3b: o que casou, mas merece um olhar
@@ -608,6 +619,7 @@ class TelaFolha(Tela):
         """Entra sempre logo acima do painel de resultado."""
         if mostrar == bool(self.cartao_conferencia.winfo_manager()):
             return
+        self.repensar_rolagem()
         if not mostrar:
             self.cartao_conferencia.pack_forget()
             return
@@ -816,12 +828,28 @@ class TelaFolha(Tela):
         self._gravar_fontes()
 
     def _medir_lista_fontes(self) -> None:
-        """Da a area a altura da lista, ate o teto -- e so entao a barra."""
+        """Da a area a altura da lista, ate o teto -- e so entao a barra.
+
+        Chamada na montagem E a cada vez que a grade muda de tamanho, porque
+        a medida da montagem pode pegar as linhas antes de elas terem altura.
+        A reentrada e barrada: mudar a altura da area e, com ela, a barra de
+        rolagem mexe no proprio widget que dispara esta medida.
+        """
+        if getattr(self, "_medindo_fontes", False):
+            return
+        self._medindo_fontes = True
+        try:
+            self._medir_lista_fontes_agora()
+        finally:
+            self._medindo_fontes = False
+
+    def _medir_lista_fontes_agora(self) -> None:
         self.grade_fontes.update_idletasks()
         pedida = self.grade_fontes.winfo_reqheight()
         altura = min(pedida, ALTURA_MAX_FONTES)
         self.tela_fontes.configure(height=max(altura, 1),
                                    scrollregion=(0, 0, 0, pedida))
+        self.repensar_rolagem()
         if pedida > altura:
             self.barra_fontes.pack(side="right", fill="y")
         else:
@@ -923,6 +951,7 @@ class TelaFolha(Tela):
         """Poe ou tira o cartao da tela, sempre acima do painel de resultado."""
         if mostrar == bool(self.cartao_fontes.winfo_manager()):
             return
+        self.repensar_rolagem()
         if not mostrar:
             self.cartao_fontes.pack_forget()
             if self.estado.tem_folha():
@@ -1346,6 +1375,9 @@ class TelaFolha(Tela):
         # conferencia -- ver `_mostrar_cartao_conferencia`.
         self._pintar_conferencia_fontes()
         self.janela.atualizar_barra()
+        # A pagina acabou de ganhar todos os cartoes: sem isto ela nao
+        # descobre que ja nao cabe. Ver `Tela.repensar_rolagem`.
+        self.repensar_rolagem()
         self.janela.status(
             "{} segurado(s) lidos de {}.".format(
                 folha.total_segurados,
@@ -1438,6 +1470,7 @@ class TelaFolha(Tela):
         # cartao "Confira antes de exportar", junto com os outros pontos que
         # pedem olho e nao acao. Esta faixa fica so com o que a LEITURA do PDF
         # encontrou de estranho.
+        self.repensar_rolagem()
         if not recados:
             self.cartao_avisos.pack_forget()
             return
