@@ -40,7 +40,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Sequence
 
-from .folha import CATEGORIA_PADRAO, Competencia, Folha, Segurado
+from .folha import (CATEGORIA_PADRAO, MES_DECIMO_TERCEIRO, Competencia, Folha,
+                    Segurado)
 
 # As duas colunas de patronal. Zero explicito, e nao coluna vazia -- o campo e
 # obrigatorio e numerico. Ver o cabecalho do modulo.
@@ -159,11 +160,12 @@ def montar(folha: Folha, codigo_da_fonte: Callable[[str], str],
 
     for segurado in folha.segurados:
         codigo, origem = _resolver_fonte(codigo_da_fonte, segurado)
+        da_linha = _competencia_da_linha(segurado, alvo)
         linhas.append(Linha(
             matricula=segurado.matricula,
             nome=segurado.nome,
-            ano=alvo.ano if alvo else 0,
-            mes=alvo.mes if alvo else 0,
+            ano=da_linha.ano if da_linha else 0,
+            mes=da_linha.mes if da_linha else 0,
             base=segurado.base_de_contribuicao,
             segurado=segurado.contribuicao_do_segurado,
             patronal=PATRONAL_NORMAL,
@@ -181,6 +183,24 @@ def montar(folha: Folha, codigo_da_fonte: Callable[[str], str],
             pendencias=_pendencias(segurado, codigo, alvo),
         ))
     return linhas
+
+
+def _competencia_da_linha(segurado: Segurado,
+                          alvo: Optional[Competencia]) -> Optional[Competencia]:
+    """A competencia desta linha -- mes 13 quando o bloco e de 13o salario.
+
+    Quase sempre e a da folha inteira. A excecao e o PDF que empilha varias
+    folhas: o de Barra do Garcas traz a mensal e a de 13o no mesmo arquivo, e
+    os cem servidores que estao nas duas sairiam com duas linhas na competencia
+    07 -- repetida, e recusada na importacao. Em 13, cada um sai uma vez em
+    cada competencia, que e o que aconteceu de verdade.
+
+    Vale tambem quando o mes foi digitado na tela: quem corrige o mes esta
+    corrigindo a competencia da folha, e nao dizendo que o 13o e mensal.
+    """
+    if alvo is None or not segurado.e_decimo_terceiro:
+        return alvo
+    return Competencia(ano=alvo.ano, mes=MES_DECIMO_TERCEIRO)
 
 
 def _resolver_fonte(codigo_da_fonte: Callable, segurado: Segurado):
