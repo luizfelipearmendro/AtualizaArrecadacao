@@ -79,6 +79,18 @@ def autoteste() -> int:
         return "{} colunas no modelo completo".format(
             len(layout.ORDEM[layout.MODELO_COMPLETO]))
 
+    def _formatos():
+        """Os leitores de folha chegaram no pacote?
+
+        Um `formatos/` que o PyInstaller nao levou junto so apareceria na
+        maquina do colega, como "nenhum formato reconhece este PDF" numa folha
+        que aqui abre normalmente.
+        """
+        from arrecadacao import formatos
+        if len(formatos.LEITORES) < 2:
+            raise AssertionError("faltam leitores: {}".format(formatos.nomes()))
+        return ", ".join(formatos.nomes())
+
     def _telas():
         # Importar as telas pega o erro de import que so apareceria ao clicar
         # no item da barra lateral -- depois de o programa ja estar aberto.
@@ -135,13 +147,94 @@ def autoteste() -> int:
                 texto, esperado))
         return "CSV confere"
 
+    def _varias_folhas_num_pdf():
+        """O 13o dentro da folha mensal sai na competencia 13, e nao no mes.
+
+        O PDF de Barra do Garcas empilha cinco folhas num arquivo so -- mensal,
+        13o, rescisao, rescisao complementar e complementar. Os servidores que
+        estao na mensal E no 13o sairiam com duas linhas na mesma competencia,
+        que a importacao recusa. Quem garante que nao e `Segurado.tipo_folha`,
+        e e uma regra facil de perder numa refatoracao do layout.
+        """
+        from arrecadacao import layout
+        from arrecadacao.folha import Competencia, Folha, Segurado, Verba
+
+        def quem(tipo):
+            s = Segurado(matricula="9999", nome="FULANA DE TAL", tipo_folha=tipo)
+            s.verbas = [Verba("8850", "PREVIDENCIA MUNICIPAL", "D",
+                              base=1000.0, valor=140.0)]
+            return s
+
+        teste = Folha(arquivo="teste.pdf", tipo="Normal",
+                      competencia=Competencia(2026, 7),
+                      segurados=[quem("Normal"), quem("13º Salário")])
+        meses = [l.mes for l in layout.montar(teste, lambda _f: "1001")]
+        if meses != [7, 13]:
+            raise AssertionError("esperava meses [7, 13], veio {}".format(meses))
+        return "13º separado da mensal"
+
+    def _nomes_da_previdencia():
+        """Cada jeito de escrever a verba de previdência ainda é reconhecido.
+
+        A verba é achada pela DESCRIÇÃO, e cada município escreve a sua: a
+        câmara de São José do Povo chama de "FUNPREV". Quem não é reconhecido
+        sai com base e contribuição ZERO, sem erro nenhum na tela -- o jeito
+        mais fácil de recolher a menos. Por isso os nomes são conferidos aqui,
+        e não só confiados a quem mexer na função um dia.
+        """
+        from arrecadacao.folha import Verba
+
+        devem_entrar = ("FUNDO PREVIDENCIA", "PREVIDENCIA - FUNDO",
+                        "PREVIDÊNCIA - FUNDO", "FUNPREV",
+                        "PREVIDENCIA MUNICIPAL")
+        # "PREVIDENCIA - INSS" é regime GERAL, não entra; "ABONO
+        # PERMANENCIA" é provento; "Base Prev Outros" é rótulo de coluna.
+        devem_ficar_de_fora = (("PREVIDENCIA - INSS", "D"),
+                               ("ABONO PERMANENCIA", "P"),
+                               ("B. PREV OUTROS", "D"))
+
+        for nome in devem_entrar:
+            if not Verba("1", nome, "D", valor=1.0).e_previdencia_do_segurado:
+                raise AssertionError("deixou de reconhecer {!r}".format(nome))
+        for nome, tipo in devem_ficar_de_fora:
+            if Verba("1", nome, tipo, valor=1.0).e_previdencia_do_segurado:
+                raise AssertionError("passou a aceitar {!r}".format(nome))
+        return "{} nomes aceitos, {} recusados".format(
+            len(devem_entrar), len(devem_ficar_de_fora))
+
+    def _fonte_do_documento_inteiro():
+        """A folha que nao agrupa ninguem vira UMA fonte, e nao N orfaos.
+
+        E' o caso da camara: duas das tres que temos nao trazem grupo nenhum.
+        Sem isso, os 94 servidores de Barra do Garcas chegavam na tela como
+        aviso ("sem fonte pagadora") e saiam no arquivo sem codigo.
+        """
+        from arrecadacao.extracao import _fonte_da_folha_inteira
+        from arrecadacao.folha import Folha, Segurado
+
+        teste = Folha(arquivo="camara.pdf",
+                      entidade="CÂMARA MUNICIPAL DE TAL",
+                      segurados=[Segurado(matricula="1"),
+                                 Segurado(matricula="2")])
+        _fonte_da_folha_inteira(teste)
+        if len(teste.fontes) != 1 or teste.sem_fonte:
+            raise AssertionError("esperava 1 fonte e nenhum órfão: {} / {}".format(
+                len(teste.fontes), len(teste.sem_fonte)))
+        if not teste.fontes[0].folha_inteira:
+            raise AssertionError("a fonte não ficou marcada como do documento")
+        return str(teste.fontes[0])
+
     conferir("PyMuPDF (leitura do PDF)", _pymupdf)
     conferir("openpyxl (gravação do xlsx)", _openpyxl)
     conferir("tkinter (janela)", _tk)
     conferir("arrastar e soltar", _dnd)
     conferir("motor de arrecadação", _motor)
+    conferir("formatos de folha", _formatos)
     conferir("telas", _telas)
     conferir("folha → layout → CSV", _ida_e_volta)
+    conferir("várias folhas num PDF", _varias_folhas_num_pdf)
+    conferir("nomes da verba de previdência", _nomes_da_previdencia)
+    conferir("folha sem fonte pagadora", _fonte_do_documento_inteiro)
 
     linhas.append("")
     linhas.append("RESULTADO: {}".format(

@@ -170,7 +170,11 @@ seguinte. Tudo mora em
 executável: a pasta do programa é substituída a cada versão.
 
 A tela da folha mostra o que sobrou, com o motivo em cada linha, e sai da tela
-quando a última é resolvida. A aba *Resumo* do XLSX registra o município e
+quando a última é resolvida. Cada linha diz também **quem está naquela fonte** —
+quantos segurados e de qual unidade, com a lista completa no balão e um clique
+que a copia. O nome do grupo (`600 - 2067 - SAMU EFETIVOS 1.600.000.603`) às
+vezes não diz nada a quem vai procurar no SISPREVWEB; o servidor que está nele
+diz, e a unidade dele diz mais ainda. A aba *Resumo* do XLSX registra o município e
 quantas linhas vieram de cada regra, e o município entra no nome sugerido do
 arquivo — `Arrecadacao_Aripuana_2026-08_Mensal.csv` —, porque a mesma
 competência sai para 29 prefeituras e ordenar a pasta por nome tem de agrupar
@@ -204,6 +208,78 @@ As colunas são lidas do cabeçalho de **cada bloco**, e não fixadas em
 constantes — é o que permite abrir uma folha de outro layout sem reescrever o
 extrator.
 
+### Mais de um formato de folha
+
+Cada prefeitura contrata o seu sistema de folha, e os PDFs não têm uma linha em
+comum. São 29 municípios: o programa lê **uma família de formatos**, não um.
+
+| formato | município de referência | o que abre o bloco |
+|---|---|---|
+| `Agili` | Aripuanã | `Funcionário(a)  Matrícula  Situação …` |
+| `ARFolha` | Rosário Oeste, Barra do Garças | `SERVIDOR: 9999.1 - FULANA …` |
+| `Betha` | São José do Povo | `Func.: 9999 - FULANA … CPF: …` |
+| `Fiorilli` | Primavera do Leste | `Matrícula  Nome do Trabalhador  Admissão …` |
+
+Dois deles põem **proventos à esquerda e descontos à direita**, duas verbas por
+linha visual; a linha é cortada na divisa e cada metade lida com o seu próprio
+cabeçalho. Ler a linha inteira como uma verba juntaria o vencimento com a
+mensalidade do sindicato.
+
+Cada um é um módulo em `arrecadacao/formatos/` que responde duas perguntas:
+
+```python
+pontuar(linhas) -> int      # quantos blocos MEUS este PDF tem?
+ler(linhas, folha)          # extraia o cabeçalho e os segurados
+```
+
+Quem abre o arquivo não escolhe nada: `extracao.ler` pergunta a todos e fica
+com o de maior pontuação. As marcas são exclusivas — o PDF de um gerador
+pontua **zero** no outro —, então a escolha não é palpite. Quando ninguém
+reconhece, a mensagem diz quais formatos existem, porque "formato não
+reconhecido" sozinho não dá o que fazer a quem leu.
+
+**Acrescentar o próximo formato** é escrever um módulo com essas duas funções
+e inscrevê-lo em `formatos.LEITORES`. Nada do que já está em produção é
+tocado — e esse é o ponto: o próximo município com folha diferente não deve
+exigir mexer no leitor que já funciona.
+
+O que é comum fica fora dos formatos: emendar as páginas, somar a base,
+reconhecer o desconto previdenciário pela descrição, casar a fonte pagadora,
+montar o layout. Os leitores entregam o **mesmo** `Segurado`, com as verbas
+marcadas `P`/`D` pela coluna em que o valor caiu, e daí para a frente o
+caminho é um só.
+
+### Como o desconto previdenciário é reconhecido
+
+Pela **descrição** da verba, e por uma lista explícita de nomes
+(`folha.NOMES_DA_PREVIDENCIA`) — cada item entrou por causa de uma folha de
+verdade. `FUNDO PREVIDENCIA`, `PREVIDENCIA - FUNDO` e `PREVIDÊNCIA - FUNDO`
+são a mesma coisa em três municípios; em São José do Povo a verba chama-se
+`FUNPREV` e não tem a palavra "previdência" em lugar nenhum.
+
+É aqui que mora o erro mais perigoso do programa: a verba que não é
+reconhecida não dá erro — o servidor sai com base e contribuição **zero**, e a
+planilha fecha. Reconhecer por prefixo curto (`PREV`) seria tentador e erraria
+para o outro lado: `Base Prev Outros` e `Base Previdência Férias` são rótulos
+de coluna, não verbas. Por isso a lista é fechada e o autoteste confere os
+nomes que devem entrar **e** os que devem ficar de fora — inclusive
+`PREVIDENCIA - INSS`, que é regime geral e não entra na arrecadação do RPPS.
+
+### Vários documentos, e vários tipos de folha num PDF
+
+A arrecadação de um mês raramente cabe num arquivo só: a prefeitura exporta a
+folha dela e a câmara a sua, e o SISPREVWEB recebe **um arquivo por
+município**. `extracao.ler_varios` lê cada PDF com o seu próprio leitor e
+devolve uma folha só, guardando em `Folha.origens` de qual documento veio cada
+coisa — é o que permite o aviso nomear o arquivo certo quando um deles vem
+digitalizado.
+
+No sentido contrário, um PDF pode trazer **várias folhas**: o de Barra do
+Garças empilha mensal, 13º salário, rescisão, rescisão complementar e
+complementar. Por isso `Segurado.tipo_folha` guarda de qual delas veio o
+bloco — os servidores que estão na mensal *e* na de 13º sairiam com duas
+linhas na mesma competência, que a importação recusa.
+
 ---
 
 ## Estrutura
@@ -212,7 +288,10 @@ extrator.
 app_arrecadacao.py        ponto de entrada e autoteste
 arrecadacao/              o motor, sem nenhuma dependência de interface
   leitor_pdf.py             palavras -> linhas -> colunas
-  extracao.py               linhas -> segurados (percorre os blocos)
+  extracao.py               escolhe o formato, emenda as páginas, avisa
+  formatos/
+    agili.py                leitor da folha do gerador Agili
+    arfolha.py              leitor da folha do gerador ARFolha
   folha.py                  modelos: Folha, Segurado, Verba, Competência
   layout.py                 segurados -> colunas do layout, e as pendências
   fontes.py                 catálogo do SISPREVWEB e o casamento com a folha

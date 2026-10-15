@@ -8,15 +8,31 @@ COMO USAR
 
 1. Abra o AtualizaArrecadacao.exe.
 
-2. Em "1 - Folha de pagamento", anexe o PDF da folha (ou arraste o arquivo
-   para a area tracejada) e clique em LER A FOLHA.
+2. Em "1 - Folha de pagamento", anexe os PDFs da folha (ou arraste os
+   arquivos para a area tracejada) e clique em LER AS FOLHAS.
 
    Serve a folha mensal, a de rescisao e a de 13o salario.
+
+   PODE ANEXAR MAIS DE UM: a folha da prefeitura e a da camara entram
+   juntas e saem num arquivo so, que e como o SISPREVWEB espera -- um
+   arquivo por municipio. Arraste os dois de uma vez, ou um depois do
+   outro; arrastar o segundo ACRESCENTA, nao troca o primeiro. Cada
+   documento fica listado com um X para tirar o que entrou por engano.
+
+   Cada prefeitura usa um sistema de folha diferente, e o programa conhece
+   mais de um formato de PDF -- ele descobre sozinho qual e, sem voce
+   precisar dizer. Se aparecer "este PDF nao esta em nenhum dos formatos
+   que o programa conhece", e um gerador novo: mande o PDF para que o
+   leitor dele seja acrescentado.
 
 3. Confira a competencia. O programa le o ano e o mes do cabecalho do PDF.
    A folha de 13o salario vira MES 13 automaticamente -- e o que o layout
    pede. Os dois campos continuam editaveis, para o caso de um cabecalho
    que o programa nao consiga ler.
+
+   Se os documentos anexados forem de competencias diferentes, a tela
+   avisa em vez de escolher calado: juntar a folha de julho com a de
+   agosto e engano de quem anexou.
 
 4. Confira o MUNICIPIO, ao lado da categoria. Ele vem do cabecalho do PDF
    e e ele que diz contra qual catalogo as fontes vao casar.
@@ -31,9 +47,8 @@ COMO USAR
 
    Ele substitui o catalogo daquele municipio e fica gravado.
 
-5. Se sobrar alguma fonte sem codigo, aparece na tela da folha, logo abaixo
-   da competencia, o cartao "Fontes pagadoras" com uma linha para cada uma
-   e o motivo:
+5. Se sobrar alguma fonte sem codigo, aparece o cartao "Falta resolver:
+   fontes sem codigo", com uma linha para cada uma e o motivo:
 
      "mais de uma fonte com este numero" -- o catalogo tem mais de um
      codigo com aquele numero. Escolha na lista qual e.
@@ -41,10 +56,34 @@ COMO USAR
      "numero nao existe no catalogo" -- fonte nova, que ainda nao foi
      exportada. Digite o codigo.
 
+     "a folha nao diz a fonte" -- o documento inteiro e de uma fonte so e
+     nao escreve qual. E' o caso da folha da camara. Escolha no catalogo:
+     a lista traz o municipio inteiro, com as fontes de camara no topo.
+
+   Debaixo de cada fonte aparece quem esta nela -- quantos segurados e de
+   qual unidade. Passe o mouse para ver a lista com matricula, nome e a
+   pagina do PDF; clique nela para copiar a lista inteira. E' por ai que
+   se descobre de qual fonte o grupo e, quando o nome nao diz.
+
    A marca amarela vira verde e a tabela se corrige na hora. Quando a
    ultima e resolvida o cartao sai da tela sozinho, e a tabela fica com o
    espaco inteiro. O que voce escolher fica gravado para as folhas
    seguintes daquele municipio.
+
+5b. Logo abaixo pode aparecer "Confira antes de exportar". Nada ali impede
+   a exportacao -- sao pontos que o programa resolveu sozinho e prefere
+   nao resolver calado:
+
+     duas fontes da folha apontando para o MESMO codigo. Se forem mesmo a
+     mesma fonte, esta certo; se nao forem, a arrecadacao de uma esta
+     sendo creditada na outra -- e o total continua fechando, que e o que
+     torna isso dificil de perceber.
+
+     fonte que casou so pelo NUMERO, com o nome diferente do catalogo.
+     Costuma ser catalogo do municipio errado, ou fonte renomeada no
+     SISPREVWEB depois da ultima exportacao.
+
+     linhas com pendencia, que a importacao vai recusar.
 
 6. Confira a tabela. Clique num titulo para ordenar, botao direito para
    filtrar. Linha em VERMELHO tem pendencia e provavelmente sera recusada
