@@ -24,6 +24,7 @@ MUNICIPIOS: Tuple[str, ...] = (
     "ACORIZAL",
     "ARIPUANÃ",
     "BARÃO DE MELGAÇO",
+    "BARRA DO GARÇAS",
     "CAMPINAPOLIS",
     "CHAPADA DOS GUIMARÃES",
     "COCALINHO",
@@ -37,6 +38,7 @@ MUNICIPIOS: Tuple[str, ...] = (
     "NOVA NAZARÉ",
     "NOVA SANTA HELENA",
     "PARANATINGA",
+    "PRIMAVERA DO LESTE",
     "RESERVA DO CABAÇAL",
     "ROSARIO OESTE",
     "SANTA TEREZINHA",
@@ -61,15 +63,32 @@ def sem_acento(texto: str) -> str:
 def reconhecer(entidade: str) -> Optional[str]:
     """Adivinha o municipio pelo cabecalho da folha. None se nao reconhecer.
 
-    O cabecalho traz "1 - DE ARIPUANA-MT", e o que interessa e o nome no meio:
-    fora o "DE" da frente e o "-MT" do fim. Serve para a tela ja vir com o
-    municipio certo escolhido -- que continua editavel, porque adivinhar o
-    municipio errado e o comeco de creditar na fonte errada.
+    Cada sistema de folha escreve o cabecalho do seu jeito, e o municipio esta
+    sempre no meio de alguma moldura:
+
+        "1 - DE ARIPUANA-MT"                       (Agili)
+        "PREFEITURA MUNICIPAL DE ROSARIO OESTE MT" (ARFolha)
+
+    O que esta funcao faz e descascar a moldura -- a numeracao da frente, o
+    "PREFEITURA MUNICIPAL", o "DE", a sigla do estado no fim -- e comparar o
+    que sobra com a lista. Serve para a tela ja vir com o municipio certo
+    escolhido, que continua editavel: adivinhar o municipio errado e o comeco
+    de creditar na fonte errada.
     """
     alvo = sem_acento(entidade)
     alvo = re.sub(r"^\s*\d+\s*-\s*", "", alvo)      # "1 - DE ARIPUANA-MT"
+    # A moldura vem na frente ou atras, conforme o gerador: "PREFEITURA
+    # MUNICIPAL DE ROSARIO OESTE MT" poe na frente e "SAO JOSE DO POVO CAMARA
+    # MUNICIPAL" poe atras. Tirar so a da frente deixava o municipio sem
+    # reconhecer, e a tela abria no municipio errado -- que e o comeco de
+    # casar as fontes contra o catalogo da cidade errada.
+    # "MUNICIPAL" e opcional: Primavera escreve so "PREFEITURA DE PRIMAVERA
+    # DO LESTE".
+    moldura = r"(?:PREFEITURA|CAMARA)(?:\s+MUNICIPAL)?"
+    alvo = re.sub(r"^\s*" + moldura + r"\s*", "", alvo)
+    alvo = re.sub(r"\s*" + moldura + r"\s*$", "", alvo)
     alvo = re.sub(r"^\s*DE\s+", "", alvo)
-    alvo = re.sub(r"\s*-\s*[A-Z]{2}\s*$", "", alvo)  # o "-MT" do fim
+    alvo = re.sub(r"\s*-?\s*[A-Z]{2}\s*$", "", alvo)  # "-MT" ou " MT" do fim
     alvo = " ".join(alvo.split())
     if not alvo:
         return None
