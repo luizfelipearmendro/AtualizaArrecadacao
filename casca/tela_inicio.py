@@ -30,6 +30,12 @@ PASSOS = (
      "importar no SISPREVWEB.", "folha"),
 )
 
+# Quanto o botao "COMEÇAR" ocupa na linha do rodape, com o espaco ao lado. E'
+# o que o texto desconta da propria quebra para nao empurrar o botao para
+# fora -- ver `montar`. Medido com folga: errar para mais so quebra o texto um
+# pouco mais cedo, errar para menos corta o botao.
+LARGURA_DO_BOTAO_COMECAR = 160
+
 
 class TelaInicio(Tela):
     chave = "inicio"
@@ -54,6 +60,17 @@ class TelaInicio(Tela):
 
         rodape = Cartao(self.corpo, padding=(18, 14))
         rodape.pack(fill="x")
+
+        # O BOTAO vai para o `pack` ANTES do texto, embora apareca depois
+        # dele. O `pack` serve os widgets na ordem em que os recebe e corta o
+        # ultimo quando falta largura: com o texto primeiro, ele tomava a
+        # linha inteira e o "COMEÇAR" saia pela direita da tela -- que e
+        # justamente o botao que leva ao primeiro passo. Servido primeiro, o
+        # botao reserva a largura que pede e quem cede e o texto, que quebra.
+        comecar = Botao(rodape.conteudo, text="COMEÇAR  ▸", primario=True,
+                        command=lambda: self.janela.ir_para("folha"))
+        comecar.pack(side="right", padx=(12, 0))
+
         aviso = tk.Label(
             rodape.conteudo,
             text="O programa lê apenas o texto embutido no PDF — ele não "
@@ -63,11 +80,9 @@ class TelaInicio(Tela):
             bg=COR_CARTAO, fg=COR_MUDO, font=fonte(T_LEGENDA), anchor="w",
             justify="left", wraplength=760)
         aviso.pack(side="left", fill="x", expand=True)
-        acompanhar_largura(aviso)
-
-        Botao(rodape.conteudo, text="COMEÇAR  ▸", primario=True,
-              command=lambda: self.janela.ir_para("folha")).pack(
-            side="right", padx=(12, 0))
+        # A folga desconta o botao e o espaco dele: sem isso o texto quebra na
+        # largura do cartao inteiro e empurra o botao de novo.
+        acompanhar_largura(aviso, folga=LARGURA_DO_BOTAO_COMECAR)
 
     def ao_entrar(self) -> None:
         self.janela.status("Pronto.")

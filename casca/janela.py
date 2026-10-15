@@ -311,6 +311,12 @@ class Janela(tk.Frame):
         self.raiz.after(120, self._drenar)
         # add="+": o ComboBusca tambem ouve o Configure do toplevel
         self.raiz.bind("<Configure>", self._ao_redimensionar, add="+")
+        # A roda do mouse e entregue pela JANELA, e nao por cada widget: um
+        # `bind` por widget nao alcanca os filhos, e a pagina so rolaria com o
+        # ponteiro em cima do fundo. Registrada UMA vez -- em `ir_para` ela se
+        # acumularia a cada navegacao, e a pagina passaria a rolar varias
+        # linhas por clique da roda. A tela visivel decide o que fazer.
+        self.raiz.bind_all("<MouseWheel>", self._rolar_tela, add="+")
         self.raiz.protocol("WM_DELETE_WINDOW", self._ao_fechar)
 
     # ------------------------------------------------------------------ #
@@ -410,11 +416,34 @@ class Janela(tk.Frame):
         self.marca_texto = tk.Frame(self.marca, bg=COR_BARRA)
         self.marca_texto.pack(side="left", padx=(10, 0))
         tk.Label(self.marca_texto, text=APP_NOME, bg=COR_BARRA,
-                 fg=COR_BARRA_FORTE, font=fonte(T_MARCA, True, titulo=True),
+                 fg=COR_BARRA_FORTE,
+                 font=fonte(self._tamanho_da_marca(), True, titulo=True),
                  anchor="w").pack(fill="x")
         tk.Label(self.marca_texto, text=APP_SUB, bg=COR_BARRA,
                  fg=COR_BARRA_FRACO, font=fonte(T_MINI), anchor="w").pack(
             fill="x")
+
+    def _tamanho_da_marca(self) -> int:
+        """O maior tamanho em que o nome do aplicativo ainda cabe na barra.
+
+        Medido, e nao fixado: no tamanho 13 "Atualiza Arrecadação" pede 169
+        pixels para os 164 que sobram ao lado da logo, e a barra mostrava
+        "Atualiza Arrecadaçã". Escolher por medida faz o nome caber hoje e
+        continuar cabendo se um dia ele mudar ou a fonte do sistema for outra.
+        """
+        import tkinter.font as tkfont
+        # 46 = o que os paddings da barra, da marca e do bloco de texto comem,
+        # medido na tela (o bloco fica com 160 dos 250 da barra), mais uma
+        # folga de 4 para o nome nao encostar na borda.
+        sobra = LARGURA_BARRA - LADO_LOGO - 46
+        tamanho = T_MARCA
+        while tamanho > 9:
+            largura = tkfont.Font(
+                font=fonte(tamanho, True, titulo=True)).measure(APP_NOME)
+            if largura <= sobra:
+                break
+            tamanho -= 1
+        return tamanho
 
     def _carregar_logo(self, lado: int = LADO_LOGO) -> Optional[tk.PhotoImage]:
         """A logo do tamanho pedido, tirada de dentro do proprio `.ico`."""
@@ -655,6 +684,15 @@ class Janela(tk.Frame):
         pasta = Path(self.prefs.pasta_relatorios)
         partes = [p for p in (pasta.parent.name, pasta.name) if p]
         self.var_destino.set("\\".join(partes) or str(pasta))
+
+    def _rolar_tela(self, evento) -> None:
+        """Roda do mouse: quem trata e a tela que esta aparecendo."""
+        tela = self.telas.get(self.atual)
+        if tela is not None:
+            try:
+                tela.rolar(evento)
+            except tk.TclError:
+                pass
 
     def status(self, texto: str) -> None:
         self.var_rodape.set(texto)

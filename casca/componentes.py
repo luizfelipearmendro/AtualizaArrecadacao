@@ -922,3 +922,63 @@ class Balao:
         janela.geometry("+{}+{}".format(x, y))
         janela.deiconify()
         janela.lift()
+
+
+# ---------------------------------------------------------------------- #
+def tornar_pesquisavel(combo: ttk.Combobox, todos) -> None:
+    """Deixa a caixa aceitar o que se digita e filtrar a lista.
+
+    Sao 29 municipios: achar o certo rolando a lista e mais trabalhoso que
+    escrever "ros". A caixa deixa de ser `readonly` e passa a filtrar a cada
+    tecla -- por pedaco do nome, em qualquer posicao e sem acento, para
+    "cabacal" achar "RESERVA DO CABAÇAL".
+
+    `todos` e uma FUNCAO que devolve a lista completa, e nao a lista: ela muda
+    quando um catalogo e importado (a marca do municipio vira "✓"), e guardar
+    uma copia aqui deixaria a busca mostrando a lista de antes.
+
+    O valor so e aceito se existir na lista. Texto solto -- "ros" sem escolher
+    nada, ou um nome que nao existe -- volta ao que estava quando a caixa perde
+    o foco: municipio errado escolhido por engano e o comeco de creditar a
+    arrecadacao na fonte errada, e meio nome digitado nao e uma escolha.
+    """
+    combo.configure(state="normal")
+    ultimo = {"valor": combo.get()}
+
+    def sem_acento(texto: str) -> str:
+        import unicodedata
+        plano = unicodedata.normalize("NFKD", str(texto or ""))
+        return "".join(c for c in plano if not unicodedata.combining(c)).upper()
+
+    def filtrar(evento) -> None:
+        if evento.keysym in ("Up", "Down", "Return", "Escape", "Tab",
+                             "Left", "Right", "Home", "End"):
+            return
+        procurado = sem_acento(combo.get()).strip()
+        lista = todos()
+        if procurado:
+            lista = [r for r in lista if procurado in sem_acento(r)]
+        combo.configure(values=lista or todos())
+
+    def confirmar(_evento=None) -> None:
+        atual = combo.get()
+        lista = todos()
+        if atual in lista:
+            ultimo["valor"] = atual
+        else:
+            # um unico candidato restante conta como escolha; o resto, nao
+            candidatos = [r for r in lista
+                          if sem_acento(atual).strip() in sem_acento(r)]
+            escolhido = candidatos[0] if len(candidatos) == 1 else ultimo["valor"]
+            combo.set(escolhido)
+            ultimo["valor"] = escolhido
+        combo.configure(values=lista)
+
+    def escolhido(_evento=None) -> None:
+        ultimo["valor"] = combo.get()
+        combo.configure(values=todos())
+
+    combo.bind("<KeyRelease>", filtrar, add="+")
+    combo.bind("<FocusOut>", confirmar, add="+")
+    combo.bind("<Return>", confirmar, add="+")
+    combo.bind("<<ComboboxSelected>>", escolhido, add="+")

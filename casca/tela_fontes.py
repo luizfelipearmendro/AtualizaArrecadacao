@@ -25,7 +25,8 @@ from tkinter import filedialog, messagebox, ttk
 
 from .base_tela import Tela
 from .componentes import (Botao, Cartao, Superficie, acompanhar_largura,
-                          campo_texto, chip, moldura_de_lista)
+                          campo_texto, chip, moldura_de_lista,
+                          tornar_pesquisavel)
 from .identidade import APP_NOME
 from .tema import (COR_BORDA, COR_CARTAO, COR_CHIP, COR_CHIP_TEXTO, COR_DICA,
                    COR_MUDO, GAP, RAIO_LINHA, T_LEGENDA, T_MINI, fonte, icone)
@@ -72,9 +73,11 @@ class TelaFontes(Tela):
         moldura = moldura_de_lista(linha)
         moldura.pack(side="left")
         self.combo_municipio = ttk.Combobox(
-            moldura.corpo, state="readonly", textvariable=self.var_municipio,
+            moldura.corpo, textvariable=self.var_municipio,
             width=40, style="Plano.TCombobox")
         self.combo_municipio.pack()
+        self._rotulos = []
+        tornar_pesquisavel(self.combo_municipio, lambda: self._rotulos)
         moldura.acompanhar(self.combo_municipio)
         self.combo_municipio.bind("<MouseWheel>", lambda e: "break")
 
@@ -142,6 +145,7 @@ class TelaFontes(Tela):
         """Refaz a lista com a marca e a contagem, sem perder a escolha."""
         rotulos, self._de_rotulo = self.janela.rotulos_de_municipio(
             com_contagem=True)
+        self._rotulos = rotulos
         self.combo_municipio.configure(values=rotulos)
         alvo = next((r for r, m in self._de_rotulo.items()
                      if m == self.estado.municipio), "")
@@ -303,7 +307,13 @@ class TelaFontes(Tela):
     def _trocar(self) -> None:
         if self._silencio:
             return
-        self.estado.municipio = self._escolhido()
+        # A caixa e pesquisavel: o trace dispara a cada tecla, e "ros" nao e
+        # rotulo nenhum. So troca de municipio quando o que esta escrito e um
+        # da lista -- senao o cadastro se apagaria enquanto alguem digita.
+        escolhido = self._escolhido()
+        if not escolhido:
+            return
+        self.estado.municipio = escolhido
         self._recasar()
         self._pintar()
 
