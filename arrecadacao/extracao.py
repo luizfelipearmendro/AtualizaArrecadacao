@@ -22,8 +22,14 @@ from .fontes import FonteDaFolha
 from .leitor_pdf import Pagina, abrir, paginas_sem_texto
 
 
-def ler(caminho: str, progresso=None) -> Folha:
-    """Le a folha inteira. `progresso` recebe (feitos, total, texto)."""
+def ler(caminho: str, progresso=None, formato: str = "") -> Folha:
+    """Le a folha inteira. `progresso` recebe (feitos, total, texto).
+
+    `formato` e o NOME de um leitor, quando a regra do municipio fixa um. Se
+    ele nao reconhecer nada no PDF, vale o reconhecimento automatico -- com
+    aviso: o PDF de um gerador pontua zero no outro, e insistir no formato
+    configurado daria uma folha vazia em vez de uma lida.
+    """
     paginas = abrir(caminho, progresso)
     folha = Folha(arquivo=caminho, paginas_sem_texto=paginas_sem_texto(paginas))
 
@@ -31,7 +37,15 @@ def ler(caminho: str, progresso=None) -> Folha:
         progresso(0, 0, "Localizando os segurados...")
     linhas = _emendar_paginas(paginas)
 
-    leitor = formatos.reconhecer(linhas)
+    leitor = formatos.por_nome(formato) if formato else None
+    if leitor is not None and not leitor.pontuar(linhas):
+        leitor = None
+        folha.avisos_de_leitura.append(
+            "O formato configurado para o município ({}) não reconhece {}; o "
+            "programa escolheu o formato sozinho.".format(
+                formato, Path(caminho).name))
+    if leitor is None:
+        leitor = formatos.reconhecer(linhas)
     if leitor is not None:
         folha.formato = leitor.NOME
         folha.segurados = leitor.ler(linhas, folha)
@@ -46,7 +60,8 @@ def ler(caminho: str, progresso=None) -> Folha:
     return folha
 
 
-def ler_varios(caminhos: Sequence[str], progresso=None) -> Folha:
+def ler_varios(caminhos: Sequence[str], progresso=None,
+               formato: str = "") -> Folha:
     """Le varios PDFs e devolve UMA folha com todos os segurados.
 
     A arrecadacao de um mes raramente cabe num arquivo so: a prefeitura exporta
@@ -64,7 +79,7 @@ def ler_varios(caminhos: Sequence[str], progresso=None) -> Folha:
     if not caminhos:
         return Folha()
     if len(caminhos) == 1:
-        return ler(caminhos[0], progresso)
+        return ler(caminhos[0], progresso, formato)
 
     lidas = []
     for indice, caminho in enumerate(caminhos, 1):
@@ -72,7 +87,7 @@ def ler_varios(caminhos: Sequence[str], progresso=None) -> Folha:
             progresso(indice - 1, len(caminhos),
                       "Lendo {} ({} de {})...".format(
                           Path(caminho).name, indice, len(caminhos)))
-        lidas.append(ler(caminho, progresso))
+        lidas.append(ler(caminho, progresso, formato))
     return _juntar(lidas)
 
 
@@ -84,6 +99,7 @@ def _juntar(lidas: Sequence[Folha]) -> Folha:
         junta.segurados.extend(parcial.segurados)
         junta.origens.extend(parcial.origens)
         junta.paginas_sem_texto.extend(parcial.paginas_sem_texto)
+        junta.avisos_de_leitura.extend(parcial.avisos_de_leitura)
 
     # A competencia e o tipo saem do primeiro PDF que os trouxe; divergencia
     # entre arquivos vira aviso, nao escolha silenciosa -- juntar a folha de
@@ -96,9 +112,22 @@ def _juntar(lidas: Sequence[Folha]) -> Folha:
     junta.formato = " + ".join(
         _distintos(o.formato for o in junta.origens if o.formato))
 
-    _avisar(junta)
-    _avisar_divergencias(junta)
+    refazer_avisos(junta)
     return junta
+
+
+def refazer_avisos(folha: Folha) -> None:
+    """Os avisos de novo, do zero, sobre os segurados de agora.
+
+    Chamado depois de juntar PDFs e depois de aplicar as regras do municipio
+    (`regras.aplicar`): separar o 13o da rescisao muda quem tem 13o dentro do
+    bloco do mes, e o aviso antigo ficaria na tela dizendo o contrario do que
+    a tabela mostra.
+    """
+    folha.avisos = []
+    _avisar(folha)
+    if len(folha.origens) > 1:
+        _avisar_divergencias(folha)
 
 
 def _avisar_divergencias(folha: Folha) -> None:
@@ -124,6 +153,12 @@ def _avisar_divergencias(folha: Folha) -> None:
             "linhas do 13º sairão na competência 13 e as demais no mês da "
             "folha — confira se é isso que você quer num arquivo só.".format(
                 ", ".join(decimos), ", ".join(mensais)))
+
+
+def _e_verba_do_decimo(descricao: str) -> bool:
+    """"PARANATINGA PREV 13 SALARIO", "PREVIDENCIA S/ 13O SALARIO RESCISAO"."""
+    from .folha import Segurado
+    return Segurado(tipo_folha=descricao or "").e_decimo_terceiro
 
 
 def _e_decimo(tipo: str) -> bool:
@@ -181,6 +216,7 @@ def _emendar_paginas(paginas: Sequence[Pagina]) -> List[tuple]:
 # ---------------------------------------------------------------------- #
 def _avisar(folha: Folha) -> None:
     """O que a tela precisa dizer antes de alguem exportar."""
+    folha.avisos.extend(folha.avisos_de_leitura)
     for origem in folha.origens:
         if not origem.paginas_sem_texto:
             continue
@@ -188,17 +224,32 @@ def _avisar(folha: Folha) -> None:
         # arquivo: anexados dois PDFs, "página 7" existe nos dois.
         onde = " de {}".format(origem.nome) if len(folha.origens) > 1 else ""
         folha.avisos.append(
-            "{} página(s){} sem texto — a folha parece digitalizada. "
-            "Os valores dessas páginas NÃO foram lidos: {}.".format(
+            "{} página(s){} digitalizada(s) — imagem ou foto da folha, sem o "
+            "texto do sistema (o texto de OCR não é lido: um dígito trocado "
+            "passaria despercebido). Os valores dessas páginas NÃO foram "
+            "lidos: {}.".format(
                 len(origem.paginas_sem_texto), onde,
                 _resumir(origem.paginas_sem_texto)))
 
-    vazias = [o.nome for o in folha.origens if not o.segurados]
+    # O documento digitalizado ja foi nomeado no aviso acima, com o motivo;
+    # dizer de novo que ele "nao esta num formato conhecido" mandaria procurar
+    # o problema no lugar errado.
+    vazias = [o.nome for o in folha.origens
+              if not o.segurados and not o.paginas_sem_texto]
     if vazias and folha.segurados:
         folha.avisos.append(
             "Nenhum segurado foi encontrado em {}. Esse documento não entrou "
             "no arquivo — confira se ele está em um dos formatos conhecidos "
             "({}).".format(", ".join(vazias), ", ".join(formatos.nomes())))
+
+    if not folha.segurados and folha.paginas_sem_texto:
+        # Digitalizado nao e formato novo: mandar "analisar o leitor" seria
+        # pedir codigo para o que se resolve pedindo o PDF certo.
+        folha.avisos.append(
+            "Nenhum segurado encontrado: o documento é digitalizado (foto ou "
+            "escaneamento). Peça ao município o PDF gerado pelo sistema de "
+            "folha.")
+        return
 
     if not folha.segurados:
         # A mensagem diz QUAIS formatos o programa conhece: quem recebe
@@ -238,6 +289,25 @@ def _avisar(folha: Folha) -> None:
             "{} segurado(s) sem matrícula legível: {}.".format(
                 len(sem_matricula),
                 _resumir([s.nome or "(sem nome)" for s in sem_matricula])))
+
+    # Previdencia do 13o dentro de um bloco que NAO e de 13o: a rescisao que
+    # paga o 13o proporcional junto ("8101 PARANATINGA PREV 13 SALARIO"). O
+    # bloco sai inteiro na competencia do mes, com a base do 13o somada -- e
+    # se o RPPS quiser o 13o na competencia 13, isso e decisao de quem declara,
+    # que a tela precisa mostrar em vez de esconder.
+    com_decimo = [s for s in folha.segurados if not folha.e_decimo_terceiro
+                  and not s.e_decimo_terceiro
+                  and any(_e_verba_do_decimo(v.descricao)
+                          for v in s.verbas_previdencia)]
+    if com_decimo:
+        folha.avisos.append(
+            "{} segurado(s) têm previdência de 13º salário dentro do bloco do "
+            "mês (rescisão com 13º proporcional, em regra). A base e a "
+            "contribuição do 13º estão somadas à linha do mês, que é a regra "
+            "deste município — para separar na competência 13, mude a regra "
+            "na tela Municípios: {}.".format(
+                len(com_decimo),
+                _resumir([s.matricula or s.nome for s in com_decimo])))
 
     repetidas = _matriculas_repetidas(folha.segurados)
     if repetidas:

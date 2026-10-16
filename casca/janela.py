@@ -291,6 +291,10 @@ class Janela(tk.Frame):
         # cadastrasse um codigo sem sair da tela.
         from arrecadacao.fontes import Cadastro
         self.cadastro = Cadastro.carregar(self.pasta_dados)
+        # As regras de cada municipio -- ver `arrecadacao.regras`. Tambem um
+        # objeto so: a tela Municipios edita, a da folha aplica.
+        from arrecadacao.regras import Configuracao
+        self.config = Configuracao.carregar(self.pasta_dados)
 
         aplicar_estilo()
         self.telas: Dict[str, object] = {}
@@ -390,9 +394,11 @@ class Janela(tk.Frame):
 
         self._item("inicio", "Início", "", glifo="inicio")
         self._secao("FLUXO")
-        self._item("folha", "Folha de pagamento", "nenhuma folha lida", "1",
+        self._item("folha", "Arrecadação", "nenhuma folha lida", "1",
                    glifo="diario")
         self._secao("CADASTRO")
+        self._item("municipios", "Municípios", "regras de cada um",
+                   glifo="conferir")
         self._item("fontes", "Fontes pagadoras", "catálogo do SISPREVWEB",
                    glifo="engrenagem")
         self._item("exportacoes", "Exportações", "o que já foi gerado",
@@ -641,8 +647,10 @@ class Janela(tk.Frame):
         from .tela_folha import TelaFolha
         from .tela_fontes import TelaFontes
         from .tela_inicio import TelaInicio
+        from .tela_municipios import TelaMunicipios
 
         for chave, classe in (("inicio", TelaInicio), ("folha", TelaFolha),
+                              ("municipios", TelaMunicipios),
                               ("fontes", TelaFontes),
                               ("exportacoes", TelaExportacoes)):
             self.telas[chave] = classe(self.conteudo, self)
@@ -829,8 +837,36 @@ class Janela(tk.Frame):
             descricao = "catálogo do SISPREVWEB"
         self.itens["fontes"].definir_estado(True, descricao)
 
+        configurados = sum(1 for m in self.config.lista_de_municipios()
+                           if self.config.configurado(m))
+        self.itens["municipios"].definir_estado(
+            True, "{} com regra própria".format(configurados) if configurados
+            else "regras de cada um")
+
+    # ------------------------------------------------------------------ #
+    # regras do municipio
+    # ------------------------------------------------------------------ #
+    def regras_atuais(self):
+        """As regras do municipio escolhido -- a geral, se nenhum foi."""
+        return self.config.regras_de(self.estado.municipio)
+
+    def aplicar_regras(self) -> None:
+        """Refaz a folha mostrada a partir da lida, com as regras de agora.
+
+        Chamado depois da leitura, ao trocar de municipio e ao voltar da tela
+        Municipios: em todos os tres casos o PDF ja esta lido, e o que mudou e
+        so o que fazer com ele.
+        """
+        if self.estado.folha_lida is None:
+            return
+        from arrecadacao.regras import aplicar
+        self.estado.folha = aplicar(self.estado.folha_lida,
+                                    self.regras_atuais(),
+                                    self.estado.complementar)
+        self.casar_fontes()
+
     def rotulos_de_municipio(self, com_contagem: bool = False) -> tuple:
-        """Os 29 municipios com uma marca em quem ja tem catalogo importado.
+        """Os municipios atendidos, com uma marca em quem ja tem catalogo.
 
         Devolve (rotulos, {rotulo: municipio}). A marca existe porque a lista
         e sempre a mesma, com e sem cadastro: sem ela, escolher um municipio
@@ -841,10 +877,8 @@ class Janela(tk.Frame):
         Mora na janela porque as duas telas mostram a MESMA lista, e a fonte da
         verdade e o cadastro, que e da janela.
         """
-        from arrecadacao.municipios import MUNICIPIOS
-
         rotulos, de_rotulo = [], {}
-        for municipio in MUNICIPIOS:
+        for municipio in self.config.lista_de_municipios():
             quantas = len(self.cadastro.fontes_de(municipio))
             if not com_contagem:
                 rotulo = "{}  {}".format("✓" if quantas else "·", municipio)
@@ -870,6 +904,16 @@ class Janela(tk.Frame):
             return self.estado.correspondencias
         self.estado.correspondencias = self.cadastro.casar_todas(
             self.estado.municipio, self.estado.folha.fontes)
+        # O que o catalogo e as escolhas nao resolveram, o CSV complementar do
+        # municipio pode resolver -- ele traz o codigo de cada servidor.
+        from arrecadacao.fontes import POR_COMPLEMENTAR
+        from arrecadacao.regras import fontes_do_complementar
+        do_csv = fontes_do_complementar(self.estado.folha,
+                                        self.estado.complementar)
+        for chave, correspondencia in self.estado.correspondencias.items():
+            if not correspondencia.resolvida and chave in do_csv:
+                correspondencia.codigo = do_csv[chave]
+                correspondencia.origem = POR_COMPLEMENTAR
         return self.estado.correspondencias
 
     def fontes_pendentes(self) -> List:

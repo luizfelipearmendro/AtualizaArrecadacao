@@ -26,7 +26,7 @@ from tkinter import ttk
 
 from .tema import (COR_ACENTO_CLARO, COR_BORDA, COR_BORDA_CAMPO, COR_CARTAO,
                    COR_CARTAO_FRACO, COR_CHIP, COR_CHIP_TEXTO, COR_DICA,
-                   COR_FUNDO, COR_LINK, COR_MUDO, COR_PRIMARIA,
+                   COR_FUNDO, COR_LINK, COR_MUDO, COR_OK, COR_PRIMARIA,
                    COR_PRIMARIA_ESCURA, COR_ROTULO, COR_SECUNDARIA,
                    COR_SECUNDARIA_ATIVA, COR_SECUNDARIA_BORDA,
                    COR_SOBRE_PRIMARIA, COR_TEXTO, COR_TITULO, PAD_CARTAO,
@@ -304,6 +304,7 @@ class Cartao(Superficie):
         super().__init__(dono, **kwargs)
         self.cabeca: Optional[tk.Frame] = None
         self.acoes: Optional[tk.Frame] = None
+        self.rotulo_titulo: Optional[tk.Label] = None
         self.rotulo_legenda: Optional[tk.Label] = None
 
         if titulo:
@@ -319,8 +320,10 @@ class Cartao(Superficie):
 
             textos = tk.Frame(self.cabeca, bg=self.cor)
             textos.pack(side="left", fill="x", expand=True)
-            tk.Label(textos, text=titulo, bg=self.cor, fg=COR_TITULO,
-                     font=fonte(T_CARTAO, True), anchor="w").pack(fill="x")
+            self.rotulo_titulo = tk.Label(
+                textos, text=titulo, bg=self.cor, fg=COR_TITULO,
+                font=fonte(T_CARTAO, True), anchor="w")
+            self.rotulo_titulo.pack(fill="x")
             # guardado porque ha cartao cuja legenda e viva -- a origem do
             # passo 2 muda conforme a conferencia
             self.rotulo_legenda = tk.Label(
@@ -727,15 +730,51 @@ class Passos(tk.Canvas):
     LADO_PASTILHA = 34
     ALTURA = 84
 
+    # Cada etapa pode dizer onde o trabalho esta: "feita" (verde, com o
+    # certo), "atual" (navy) ou "pendente" (apagada). Sem estado, todas saem
+    # navy -- o desenho do Inicio, que mostra o caminho e nao o progresso.
+    FEITA, ATUAL, PENDENTE = "feita", "atual", "pendente"
+
     def __init__(self, dono: tk.Misc,
                  etapas: Sequence[Tuple[str, str, str]],
-                 cor_fora: str = COR_CARTAO) -> None:
+                 cor_fora: str = COR_CARTAO,
+                 ao_clicar=None) -> None:
         super().__init__(dono, bg=cor_fora, highlightthickness=0, bd=0,
                          takefocus=0, height=self.ALTURA)
         self.etapas = list(etapas)
+        self.estados: List[str] = []
         self._cor_fora = cor_fora
         self._largura = 0
+        self._ao_clicar = ao_clicar
         self.bind("<Configure>", self._ao_medir, add="+")
+        if ao_clicar is not None:
+            self.configure(cursor="hand2")
+            self.bind("<Button-1>", self._clique, add="+")
+
+    def marcar(self, estados: Sequence[str],
+               detalhes: Optional[Sequence[str]] = None) -> None:
+        """Pinta o estado de cada etapa; `detalhes` troca a segunda linha."""
+        self.estados = list(estados)
+        if detalhes is not None:
+            self.etapas = [(titulo, detalhe or antigo, glifo)
+                           for (titulo, antigo, glifo), detalhe
+                           in zip(self.etapas, detalhes)]
+        self._pintar()
+
+    def _clique(self, evento) -> None:
+        if self._largura < 40 or not self.etapas:
+            return
+        indice = int(evento.x // (self._largura / len(self.etapas)))
+        self._ao_clicar(max(0, min(indice, len(self.etapas) - 1)))
+
+    def _cores(self, indice: int) -> Tuple[str, str, str]:
+        """(pastilha, glifo, titulo) da etapa, conforme o estado dela."""
+        estado = self.estados[indice] if indice < len(self.estados) else ""
+        if estado == self.FEITA:
+            return (COR_OK, COR_SOBRE_PRIMARIA, COR_TITULO)
+        if estado == self.PENDENTE:
+            return (COR_CHIP, COR_DICA, COR_MUDO)
+        return (COR_PRIMARIA, COR_SOBRE_PRIMARIA, COR_TITULO)
 
     def _ao_medir(self, evento) -> None:
         if evento.width == self._largura:
@@ -761,15 +800,19 @@ class Passos(tk.Canvas):
         for indice, (titulo, detalhe, glifo) in enumerate(self.etapas):
             centro = centros[indice]
             metade = self.LADO_PASTILHA / 2
+            pastilha, tinta, cor_titulo = self._cores(indice)
+            feita = (indice < len(self.estados)
+                     and self.estados[indice] == self.FEITA)
             desenhar_arredondado(
                 self, centro - metade, meio - metade, centro + metade,
-                meio + metade, RAIO_ITEM, preenchimento=COR_PRIMARIA,
-                contorno=COR_PRIMARIA, cor_fora=self._cor_fora)
-            self.create_text(centro, meio + 1, text=icone(glifo),
-                             fill=COR_SOBRE_PRIMARIA, font=fonte_icone(16))
+                meio + metade, RAIO_ITEM, preenchimento=pastilha,
+                contorno=pastilha, cor_fora=self._cor_fora)
+            self.create_text(centro, meio + 1,
+                             text=icone("certo" if feita else glifo),
+                             fill=tinta, font=fonte_icone(16))
             self.create_text(centro, meio + metade + 10,
                              text="{} · {}".format(indice + 1, titulo),
-                             fill=COR_TITULO, font=fonte(T_LEGENDA, True),
+                             fill=cor_titulo, font=fonte(T_LEGENDA, True),
                              anchor="n", width=fatia - 16, justify="center")
             self.create_text(centro, meio + metade + 28, text=detalhe,
                              fill=COR_MUDO, font=fonte(T_MINI), anchor="n",

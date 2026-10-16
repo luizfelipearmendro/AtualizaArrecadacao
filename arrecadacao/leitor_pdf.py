@@ -43,11 +43,11 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import fitz  # PyMuPDF
 
-# Duas palavras pertencem a mesma linha quando os topos diferem menos do que
-# isto. A folha usa corpo 6 a 8: linhas vizinhas distam 9 pontos ou mais, e
-# palavras da mesma linha raramente diferem de 1 -- mas diferem, porque o
-# gerador desenha o texto em caixas de altura propria.
-TOLERANCIA_LINHA = 3.0
+# Uma palavra pertence a linha quando seu topo esta ate isto abaixo do topo
+# da palavra mais alta da linha. A folha usa corpo 6 a 8: linhas vizinhas
+# distam 9 pontos ou mais, e palavras da mesma linha raramente diferem de 1 --
+# mas diferem, porque o gerador desenha o texto em caixas de altura propria.
+TOLERANCIA_LINHA = 2.0
 
 # Espaco em branco que separa uma celula da seguinte. A medida e apertada de
 # proposito: entre palavras de um mesmo nome o vao e de 1,9 ponto, e o menor
@@ -140,21 +140,36 @@ def _fechar_celula(palavras: List[Palavra]) -> Celula:
 def linhas_da_pagina(pagina) -> List[Linha]:
     """As linhas visuais da pagina, de cima para baixo.
 
-    Agrupa por `y0` arredondado a `TOLERANCIA_LINHA`. Arredondar, e nao
-    comparar com a linha anterior, porque a comparacao encadeada faz duas
-    linhas distantes acabarem no mesmo grupo quando ha uma terceira no meio --
-    o efeito domino que junta o rodape com a ultima verba.
-    """
-    grupos: Dict[int, List[Palavra]] = {}
-    for x0, y0, x1, _y1, texto, *_resto in pagina.get_text("words"):
-        if not texto.strip():
-            continue
-        chave = int(round(y0 / TOLERANCIA_LINHA))
-        grupos.setdefault(chave, []).append(
-            Palavra(texto=texto, x0=x0, x1=x1, y0=y0))
+    A linha comeca na palavra mais alta que ainda nao tem linha e leva as que
+    estao ate `TOLERANCIA_LINHA` abaixo DELA. Medir sempre a partir da mesma
+    palavra, e nao da anterior, e o que evita o efeito domino da comparacao
+    encadeada -- duas linhas distantes no mesmo grupo porque ha uma terceira
+    no meio, juntando o rodape com a ultima verba.
 
-    linhas = [Linha(y=chave * TOLERANCIA_LINHA, palavras=sorted(p, key=lambda w: w.x0))
-              for chave, p in sorted(grupos.items())]
+    Antes era arredondando o `y0` a faixas fixas de 3 pontos, e a faixa tem
+    fronteira: em Confresa a descricao "PREVICON - NORMAL" esta em 166,4 e o
+    codigo "56" com os valores em 166,8 -- a 0,4 ponto, mas 166,4/3 cai na
+    faixa 55 e 166,8/3 na 56. Viravam duas linhas, a verba ficava sem nome e
+    58 servidores sem previdencia. Ancorar na palavra mais alta nao tem
+    fronteira para cair do lado errado.
+    """
+    palavras = sorted(
+        (Palavra(texto=texto, x0=x0, x1=x1, y0=y0)
+         for x0, y0, x1, _y1, texto, *_resto in pagina.get_text("words")
+         if texto.strip()),
+        key=lambda p: p.y0)
+
+    linhas: List[Linha] = []
+    atual: List[Palavra] = []
+    for palavra in palavras:
+        if atual and palavra.y0 - atual[0].y0 > TOLERANCIA_LINHA:
+            linhas.append(Linha(y=atual[0].y0,
+                                palavras=sorted(atual, key=lambda w: w.x0)))
+            atual = []
+        atual.append(palavra)
+    if atual:
+        linhas.append(Linha(y=atual[0].y0,
+                            palavras=sorted(atual, key=lambda w: w.x0)))
     return linhas
 
 
@@ -293,13 +308,49 @@ def abrir(caminho: str, progresso=None) -> List[Pagina]:
         total = len(documento)
         paginas: List[Pagina] = []
         for indice, pagina in enumerate(documento, start=1):
-            paginas.append(Pagina(numero=indice, linhas=linhas_da_pagina(pagina)))
+            # Pagina fotografada nao tem linha nenhuma, mesmo que o OCR tenha
+            # deixado texto nela -- ver `_e_escaneada`.
+            linhas = [] if _e_escaneada(pagina) else linhas_da_pagina(pagina)
+            paginas.append(Pagina(numero=indice, linhas=linhas))
             if progresso and (indice % 10 == 0 or indice == total):
                 progresso(indice, total,
                           "Lendo a folha: pagina {} de {}...".format(indice, total))
         return paginas
     finally:
         documento.close()
+
+
+def _e_escaneada(pagina) -> bool:
+    """A pagina e uma FOTO da folha, com o texto do OCR por cima?
+
+    O Adobe Scan do celular -- a camara de Santa Terezinha mandou assim --
+    grava a foto ocupando a pagina inteira e, por cima, o texto que o OCR
+    reconheceu, INVISIVEL. Ha texto, entao a pagina passava por folha de
+    verdade: "11.158.38", "PREVIDÉNCIA", as colunas fora de ordem. Ler isso e
+    arriscar o pior erro deste programa, o digito trocado que ninguem ve.
+
+    O que denuncia a foto e a combinacao: uma imagem cobrindo a pagina E mais
+    texto invisivel do que visivel. Nas 36 folhas de `arquivos_base/` so as
+    duas paginas do Adobe Scan cumprem as duas -- nenhuma folha gerada pelo
+    sistema tem imagem acima de 6% da pagina.
+    """
+    try:
+        area = abs(pagina.rect)
+        if not area:
+            return False
+        cobertura = max((abs(fitz.Rect(info["bbox"]) & pagina.rect) / area
+                         for info in pagina.get_image_info()), default=0.0)
+        if cobertura < 0.9:
+            return False
+        visivel = invisivel = 0
+        for traco in pagina.get_texttrace():
+            if traco.get("type") == 3 or traco.get("opacity", 1) == 0:
+                invisivel += len(traco["chars"])
+            else:
+                visivel += len(traco["chars"])
+        return invisivel > visivel
+    except Exception:            # PyMuPDF antigo, pagina estragada: le normal
+        return False
 
 
 def paginas_sem_texto(paginas: Sequence[Pagina]) -> List[int]:

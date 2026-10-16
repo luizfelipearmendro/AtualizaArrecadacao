@@ -8,8 +8,8 @@ municipio sobre o cadastro de outro casaria tudo e creditaria a arrecadacao
 inteira na fonte errada -- por isso o municipio e escolhido antes, e nao
 deduzido do arquivo.
 
-Digitada, e nao lida de lugar nenhum: sao 29 e mudam de tempos em tempos, e
-uma lista fechada e o que permite escolher de uma lista em vez de digitar
+Digitada, e nao lida de lugar nenhum: sao umas trinta e mudam de tempos em
+tempos -- a tela Municipios acrescenta as que faltarem --, e uma lista fechada e o que permite escolher de uma lista em vez de digitar
 "ARIPUANA" hoje e "Aripuana" no mes que vem -- duas grafias, dois cadastros,
 metade das fontes sumindo sem erro nenhum.
 """
@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Optional, Tuple
+from typing import Optional, Sequence, Tuple
 
 MUNICIPIOS: Tuple[str, ...] = (
     "ACORIZAL",
@@ -29,6 +29,7 @@ MUNICIPIOS: Tuple[str, ...] = (
     "CHAPADA DOS GUIMARÃES",
     "COCALINHO",
     "COLNIZA",
+    "COMODORO",
     "CONFRESA",
     "GAÚCHA DO NORTE",
     "JANGADA",
@@ -36,6 +37,7 @@ MUNICIPIOS: Tuple[str, ...] = (
     "JUARA",
     "NOVA MARILANDIA",
     "NOVA NAZARÉ",
+    "NOVA OLÍMPIA",
     "NOVA SANTA HELENA",
     "PARANATINGA",
     "PRIMAVERA DO LESTE",
@@ -60,7 +62,8 @@ def sem_acento(texto: str) -> str:
     return "".join(c for c in decomposto if not unicodedata.combining(c)).upper()
 
 
-def reconhecer(entidade: str) -> Optional[str]:
+def reconhecer(entidade: str,
+               lista: Optional[Sequence[str]] = None) -> Optional[str]:
     """Adivinha o municipio pelo cabecalho da folha. None se nao reconhecer.
 
     Cada sistema de folha escreve o cabecalho do seu jeito, e o municipio esta
@@ -93,12 +96,25 @@ def reconhecer(entidade: str) -> Optional[str]:
     if not alvo:
         return None
 
-    for municipio in MUNICIPIOS:
-        if sem_acento(municipio) == alvo:
+    lista = tuple(lista) if lista else MUNICIPIOS
+    alvo = _sem_conectivos(alvo)
+    for municipio in lista:
+        if _sem_conectivos(sem_acento(municipio)) == alvo:
             return municipio
     # "VILA BELA DA SANTISSIMA TRINDADE" para "VILA BELA", e o contrario
-    for municipio in MUNICIPIOS:
-        limpo = sem_acento(municipio)
+    for municipio in lista:
+        limpo = _sem_conectivos(sem_acento(municipio))
         if alvo.startswith(limpo) or limpo.startswith(alvo):
             return municipio
     return None
+
+
+def _sem_conectivos(texto: str) -> str:
+    """Sem o "DE"/"DO"/"DA" do meio do nome.
+
+    A camara escreve "SANTO ANTONIO DE LEVERGER" e a lista "SANTO ANTONIO DO
+    LEVERGER": as duas grafias correm por ai, e a diferenca de uma letra nao
+    pode deixar a folha sem municipio reconhecido.
+    """
+    return " ".join(p for p in texto.split()
+                    if p not in ("DE", "DO", "DA", "DOS", "DAS"))

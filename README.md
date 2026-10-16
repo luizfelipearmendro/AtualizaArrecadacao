@@ -3,8 +3,9 @@
 Lê a folha de pagamento em PDF e monta o arquivo de importação do módulo de
 arrecadação do SISPREVWEB.
 
-A equipe de arrecadação anexa o PDF da folha, confere a tabela na tela e
-exporta em `.xlsx` (para conferir) ou `.csv` (para importar).
+A equipe de arrecadação escolhe o município — que traz as regras dele —,
+anexa o PDF da folha, confere a tabela na tela e exporta em `.xlsx` (para
+conferir) ou `.csv` (para importar).
 
 ---
 
@@ -182,6 +183,85 @@ por cidade.
 
 ---
 
+## Regras por município
+
+O trabalho anda em quatro etapas, desenhadas no Início ("Como o trabalho
+anda") e repetidas no alto da tela da arrecadação, onde mostram o que já foi
+feito e o que falta:
+
+    1 · Município     →  2 · Folhas          →  3 · Conferência       →  4 · Exportar
+    traz as regras       PDFs e complementar     números, avisos, fontes   o arquivo do SISPREVWEB
+
+O município vem **antes** do PDF porque é ele que diz o que fazer com a folha.
+A tela **Municípios** tem a *regra geral* e, para cada município, só o que ele
+tem de diferente — cada campo começa em "Seguir a regra geral (…)". Mudar a
+regra geral muda todos os que a seguem.
+
+| Regra | O que decide |
+|---|---|
+| Formato da folha | qual leitor usar; o padrão é o programa reconhecer sozinho |
+| 13º dentro da rescisão | **somar** à linha do mês ou **separar** na competência 13 |
+| Arquivo complementar | o município manda um CSV junto (Nova Olímpia) |
+| Categoria | a coluna 10 do layout |
+| Descontos que não são / que são do RPPS | código da verba ou pedaço da descrição; **somam-se** aos da regra geral |
+| Observações | o que quem faz a arrecadação precisa lembrar |
+
+As regras ficam em `%LOCALAPPDATA%\AtualizaArrecadacao\regras_municipios.json`,
+ao lado do cadastro de fontes. Na primeira abertura, Nova Olímpia já vem
+pedindo o CSV complementar. Município que falta na lista se acrescenta na
+própria tela.
+
+Trocar o município ou uma regra **depois** da leitura refaz as linhas sem reler
+o PDF: `regras.aplicar` trabalha sobre uma cópia da folha lida, que fica
+intacta. E se o cabeçalho da folha falar de outra cidade que não a escolhida,
+a tela avisa — é o jeito de perceber o PDF do município errado antes de
+creditar nas fontes erradas.
+
+### O 13º dentro da rescisão
+
+A rescisão que paga o 13º proporcional traz a previdência dele no mesmo bloco.
+Em Aripuanã, FULANA DE TAL:
+
+| Verba | Base | Valor |
+|---|---|---|
+| 8850 PREVIDENCIA MUNICIPAL | 504,91 | 70,69 |
+| 8847 PREVIDENCIA S/ 13º SALARIO RESCISAO | 1.472,65 | 206,17 |
+| 10004 Base Patronal para RPPS | 1.977,56 | 276,86 |
+
+A própria folha soma os dois na base patronal, e **somar** (o padrão) faz o
+mesmo: uma linha em 08 com 1.977,56 / 276,86. **Separar** dá duas — 08 com
+504,91 / 70,69 e 13 com 1.472,65 / 206,17 —, levando junto o provento de 13º
+para a conferência de proventos continuar fechando. Se toda a previdência do
+bloco era de 13º (Barra do Garças, `992 PREVIDENCIA FUNDO 13º SALARIO
+PROPORC`), o bloco inteiro muda para 13, em vez de deixar uma linha de base
+zero no mês. Casos nas folhas de `arquivos_base/`: 4 em Aripuanã, 2 em
+Paranatinga, 3 em Barra do Garças.
+
+### O arquivo complementar (Nova Olímpia)
+
+A Dura Lex não imprime a base de cada servidor, só a contribuição, e a base
+deduzida dela fica alguns centavos longe da real. Nova Olímpia manda junto um
+CSV que **já está no layout do SISPREVWEB** (matrícula; nome; ano; mês; base;
+contribuição; patronal; especial; fonte; categoria). Ele é anexado com os PDFs
+— arrastado junto, ou pelo PROCURAR — e lido por `complementar.py`.
+
+O PDF continua sendo lido: o CSV é o que a prefeitura diz que descontou, e a
+folha é o que ela pagou. Os dois se conferem, e o que não bate vira aviso:
+
+* a base vem do CSV **só para quem tem a mesma contribuição** nos dois;
+* contribuição diferente, servidor só na folha, matrícula só no CSV e fonte
+  pagadora diferente são listados na tela;
+* o CSV de **outra competência não é usado** — o de 08/2026 anexado à folha de
+  07/2026 fica de fora, com aviso;
+* a fonte pagadora que o catálogo não resolve sai do código que o CSV dá para
+  os servidores dela, quando todos dizem o mesmo (origem "arquivo
+  complementar do município"). Nova Olímpia não tem catálogo na pasta: com o
+  CSV, as fontes sem código caem de 42 para 4.
+
+As matrículas casam sem os zeros da frente: "000014" no PDF é "14" no CSV.
+
+---
+
 ## Como o PDF é lido
 
 O PDF da folha não tem tabela — tem texto posicionado. Pedir
@@ -192,7 +272,15 @@ intercala o bloco dos rótulos com o bloco dos valores; ler assim é adivinhar.
 com o mesmo topo formam uma linha, um vão grande separa uma célula da outra, e
 cada célula vai para a coluna do cabeçalho mais próxima.
 
-Duas medidas foram calibradas contra a folha real e estão comentadas no código:
+"Mesmo topo" é: até 2 pontos abaixo da palavra mais alta da linha. Antes era
+arredondando o topo a faixas fixas de 3 pontos, e faixa tem fronteira — a
+descrição "PREVIDENCIA - FUNDO" em y=727,3 e o código "942" com os valores em
+727,6 caíam em faixas vizinhas e viravam duas linhas. A verba ficava sem nome e
+o servidor sem previdência: 77 em Barra do Garças e 58 em Confresa saíam
+zerados assim.
+
+Outras duas medidas foram calibradas contra a folha real e estão comentadas no
+código:
 
 * **o vão entre células é 8 pontos** — entre palavras de um mesmo nome ele é
   1,9; o menor vão *entre colunas* é o de 10,8 que separa a data de admissão do
@@ -215,10 +303,29 @@ comum. São 29 municípios: o programa lê **uma família de formatos**, não um
 
 | formato | município de referência | o que abre o bloco |
 |---|---|---|
-| `Agili` | Aripuanã | `Funcionário(a)  Matrícula  Situação …` |
-| `ARFolha` | Rosário Oeste, Barra do Garças | `SERVIDOR: 9999.1 - FULANA …` |
+| `Agili` | Aripuanã, Paranatinga | `Funcionário(a)  Matrícula  Situação …` |
+| `ARFolha` | Rosário Oeste, Barra do Garças, Confresa, Chapada dos Guimarães, Tabaporã, Santo Antônio de Leverger | `SERVIDOR: 9999.1 - FULANA …` |
 | `Betha` | São José do Povo | `Func.: 9999 - FULANA … CPF: …` |
-| `Fiorilli` | Primavera do Leste | `Matrícula  Nome do Trabalhador  Admissão …` |
+| `Betha (extrato mensal)` | Vila Bela da Santíssima Trindade, Santa Terezinha | `Código  Funcionário  C.P.F.  Admissão …` |
+| `Centi` | Campinápolis (câmara), São Félix do Araguaia | `Funcionário 1 - FULANA … CPF` … `Base calc. previdência:` |
+| `Dura Lex` | Nova Olímpia | `Código  Nome  Tipo  Func.  Função …` |
+| `FastReport` | Campinápolis (prefeitura) | `Funcionário: 1990 - FULANA C.P.F.: …` |
+| `Fiorilli` | Primavera do Leste, Colniza, Comodoro, Jauru, Cocalinho | `Matrícula  Nome do Trabalhador  Admissão …` |
+
+O **Dura Lex** é o único em que a contribuição não é verba: o relatório já vem
+filtrado pelo RPPS e traz só o valor, no rodapé de cada servidor, e a base
+apenas nos resumos de seção. A parte do 13º sai exata (o provento de 13º é a
+base dele) num segurado à parte, na competência 13; a base **mensal** é
+deduzida da contribuição e calibrada seção a seção contra o resumo — os
+totais fecham com a folha, mas cada servidor pode ficar até 7 centavos de base
+longe do verdadeiro (a contribuição, não: ela é lida). Ver o cabeçalho de
+`formatos/duralex.py`.
+
+No **Centi** de São Félix do Araguaia, o fecho `Base calc. previdência` de cada
+bloco imprime o **dobro** da base: a verba `142 PREVIDENCIA RPPS` tem base
+3.297,92 e retém 461,70 (14%), e o fecho diz 6.595,84. O resumo do RPPS no fim
+do PDF soma as bases das verbas, então é a coluna da verba que vale; o fecho só
+é usado quando a verba vem sem base.
 
 Dois deles põem **proventos à esquerda e descontos à direita**, duas verbas por
 linha visual; a linha é cortada na divisa e cada metade lida com o seu próprio
@@ -251,19 +358,46 @@ caminho é um só.
 
 ### Como o desconto previdenciário é reconhecido
 
-Pela **descrição** da verba, e por uma lista explícita de nomes
-(`folha.NOMES_DA_PREVIDENCIA`) — cada item entrou por causa de uma folha de
-verdade. `FUNDO PREVIDENCIA`, `PREVIDENCIA - FUNDO` e `PREVIDÊNCIA - FUNDO`
-são a mesma coisa em três municípios; em São José do Povo a verba chama-se
-`FUNPREV` e não tem a palavra "previdência" em lugar nenhum.
+Pela **descrição** da verba de desconto, com uma regra de palavra
+(`folha.RE_NOME_DA_PREVIDENCIA`): uma palavra que começa por `PREVI`, a palavra
+`PREV` sozinha, `FUNPREV`, `RPPS` ou `I.M.P.V.B.`. Começou como uma lista de
+nomes, um por município, e a lista perdeu a corrida — cada prefeitura batiza o
+próprio fundo: `PREVIDÊNCIA - FUNDO`, `FUNPREV`, `PREV COLNIZA`, `PREVILA`,
+`PREVICON`, `PREVISERV`, `PARANATINGA PREV`, `PREVIPORÃ`, `PREVI-CAMP`… Sete
+folhas chegaram de uma vez com todos os servidores zerados, porque o nome do
+fundo não estava na lista.
+
+O que tem cara de previdência e **não** é a do regime próprio fica de fora
+(`folha.RE_NAO_E_DO_RPPS`): INSS (regime geral), previdência complementar ou
+privada (em Aripuanã, `8900 PREVIDENCIA COMPLEMENTAR` é 8,5% sobre o que passa
+do teto do RPPS; em Jauru, `715 BB PREV CONTRIBUIÇÃO DO`, a do Banco do
+Brasil), seguradora (`809 CAPEMISA-PREV/SEG` em Leverger), consignado e
+empréstimo tomados no fundo (`CONSIGNAÇÃO COMODORO-PREVI 3/96`) e rótulos de
+coluna lidos como verba (`B. Prev Outros`, Palavra inteira, não pedaço: `CONSIGNADO IMPREV` tem "PREV" no meio e não
+entra. O que a regra de palavra errar num município se corrige na tela
+Municípios, sem mexer no código.
+
+Na câmara de Colniza a folha de **férias** vem no mesmo PDF da mensal, e a
+mensal já traz as férias por dentro (inclusive a `947 PREV COLNIZA - FÉRIAS`).
+O leitor Fiorilli não soma os dois blocos — cobraria a contribuição das férias
+duas vezes. Ele usa a base de férias impressa no bloco de férias para a verba
+947 do mensal, e o bloco de férias sai da lista: uma linha por servidor, com
+base e contribuição do mês inteiro.
+
+Vila Bela não usa a palavra "previdência" em nenhuma das duas folhas: a
+prefeitura desconta `56 PREVILA` (o nome do fundo) e a câmara `56 I.M.P.V.B. -
+INST.PREV.PÚB. MUN.`. O extrato do Betha traz ainda os processamentos Mensal,
+Férias e Complementar no mesmo PDF, e o mesmo servidor em mais de um bloco — o
+mensal, com a previdência, e outro de base zero com as diárias ou o 1/3 de
+férias. O leitor junta os blocos da matrícula num servidor só; se dois deles
+tiverem previdência, não junta, e o aviso de matrícula repetida aparece.
 
 É aqui que mora o erro mais perigoso do programa: a verba que não é
 reconhecida não dá erro — o servidor sai com base e contribuição **zero**, e a
-planilha fecha. Reconhecer por prefixo curto (`PREV`) seria tentador e erraria
-para o outro lado: `Base Prev Outros` e `Base Previdência Férias` são rótulos
-de coluna, não verbas. Por isso a lista é fechada e o autoteste confere os
-nomes que devem entrar **e** os que devem ficar de fora — inclusive
-`PREVIDENCIA - INSS`, que é regime geral e não entra na arrecadação do RPPS.
+planilha fecha. O erro do outro lado é tão silencioso quanto: a verba que entra
+sem ser do RPPS infla base e contribuição. Por isso o autoteste confere os
+nomes que devem entrar **e** os que devem ficar de fora, cada um vindo de uma
+folha real.
 
 ### Vários documentos, e vários tipos de folha num PDF
 
@@ -280,6 +414,13 @@ complementar. Por isso `Segurado.tipo_folha` guarda de qual delas veio o
 bloco — os servidores que estão na mensal *e* na de 13º sairiam com duas
 linhas na mesma competência, que a importação recusa.
 
+Atenção ao relatório que **junta** processamentos sem separá-los: o Agili de
+Paranatinga escreve "(Rescisão, 13º salário, Mensal)" no subtítulo. Isso não é
+folha de 13º — quando o tipo fala também em mensal ou normal, a folha é a do
+mês. E a rescisão que paga o 13º proporcional junto (`8101 PARANATINGA PREV 13
+SALARIO`) segue a regra do município — ver [O 13º dentro da
+rescisão](#o-13º-dentro-da-rescisão).
+
 ---
 
 ## Estrutura
@@ -289,16 +430,18 @@ app_arrecadacao.py        ponto de entrada e autoteste
 arrecadacao/              o motor, sem nenhuma dependência de interface
   leitor_pdf.py             palavras -> linhas -> colunas
   extracao.py               escolhe o formato, emenda as páginas, avisa
-  formatos/
-    agili.py                leitor da folha do gerador Agili
-    arfolha.py              leitor da folha do gerador ARFolha
+  formatos/                 um leitor por gerador de folha (ver a tabela acima)
   folha.py                  modelos: Folha, Segurado, Verba, Competência
+  regras.py                 as regras de cada município, e a aplicação delas
+  complementar.py           o CSV que o município manda junto com a folha
   layout.py                 segurados -> colunas do layout, e as pendências
   fontes.py                 catálogo do SISPREVWEB e o casamento com a folha
-  municipios.py             os 29 municípios, e qual deles a folha é
+  municipios.py             os municípios atendidos, e qual deles a folha é
   exportacao.py             gravação do .xlsx e do .csv, e o nome sugerido
 casca/                    a janela — mesma casca do AutoArial
-  tela_folha.py             a tela principal: anexar, conferir, exportar
+  tela_inicio.py            "Como o trabalho anda" e os pontos de partida
+  tela_folha.py             a arrecadação: município, anexar, conferir, exportar
+  tela_municipios.py        a regra geral e a de cada município
   tela_fontes.py            importação do catálogo, por município
   tela_exportacoes.py       histórico e pasta de destino
 ```
@@ -314,9 +457,67 @@ As três folhas de `arquivos_base/` (competência 08/2026, Aripuanã-MT):
 
 | Folha | Páginas | Segurados | Base | Contribuição |
 |-------|---------|-----------|------|--------------|
-| Mensal | 225 | 774 | 4.126.327,68 | 577.433,34 |
+| Mensal | 225 | 774 | 4.121.735,97 | 577.043,04 |
 | Rescisão | 4 | 4 | 8.639,47 | 1.209,53 |
 | 13º salário | 1 | 1 | 5.364,84 | 751,08 |
+
+A mensal saía antes com 4.126.327,68 / 577.433,34: somava a `8900 PREVIDENCIA
+COMPLEMENTAR` de três servidores acima do teto, que não é do RPPS.
+
+E, conferidas contra o que a **própria folha imprime** — o resumo do RPPS, a
+base impressa por servidor ou o total geral do PDF:
+
+| Folha | Leitor | Segurados | Base | Conferido contra |
+|---|---|---|---|---|
+| Comodoro | Fiorilli | 573 | 3.516.378,12 | "Total Geral" da última página |
+| Vila Bela (prefeitura / câmara) | Betha extrato | 536 / 20 | 2.167.525,34 / 117.778,27 | Base Prev de cada bloco; totais de proventos e descontos |
+| Chapada dos Guimarães | ARFolha | 258 | 1.944.840,85 | "Base Previdência" de cada servidor |
+| Tabaporã (prefeitura / câmara) | ARFolha | 377 / 5 | 2.353.116,91 / 32.299,04 | "Base Previdência" de cada servidor |
+| Paranatinga | Agili | 628 | 3.863.840,90 | "Base Patronal para RPPS" de cada servidor |
+| Campinápolis câmara | Centi | 7 blocos | 48.794,04 | resumo RPPS (retido 6.831,14) |
+| Campinápolis prefeitura | FastReport | 420 | 2.556.140,75 | total geral de proventos e descontos; 14% em todos |
+| Nova Olímpia prefeitura | Dura Lex | 383 (+59 de 13º) | 2.180.543,51 + 44.237,19 | resumo SIMPREV (305.274,74 + 6.192,93) |
+| Nova Olímpia câmara | Dura Lex | 5 | 36.640,38 | resumo SIMPREV (5.129,65) |
+| São Félix do Araguaia prefeitura | Centi | 88 | 453.303,57 | resumo RPPS (retido 63.462,04); totais de proventos e descontos |
+| São Félix do Araguaia câmara | Centi | 23 blocos (10 com RPPS) | 118.451,99 | resumo RPPS (retido 16.583,22) |
+| Santo Antônio de Leverger câmara | ARFolha | 3 | 27.835,77 | "Base Previdência" dos TOTAIS (3 servidores, proventos 44.254,30) |
+| Santo Antônio de Leverger prefeitura | ARFolha | 240 (231 normal, 2 rescisão, 7 complementar) | 1.138.935,20 | blocos e "TOTAL PROVENTOS" de cada bloco (1.611.757,14); retido 159.449,83 |
+| Jauru prefeitura | Fiorilli | 263 | 1.248.422,78 | "Total Geral" e a "Base Prev." de cada servidor; retido 174.779,33 |
+| Jauru câmara | Fiorilli | 6 | 46.653,38 | "Total Geral" e a "Base Prev." de cada servidor; retido 6.531,47 |
+| Cocalinho (folha mensal) | Fiorilli | 174 | 766.465,24 | "Base Prev." de cada servidor — 173 de 174; ver abaixo |
+| Santa Terezinha prefeitura | Betha extrato | 202 (204 blocos) | 1.055.808,59 | "Base Prev" de cada bloco e "Totais da quebra" (proventos 1.310.132,93); retido 147.813,20 |
+
+Em Cocalinho o "Total Geral" diz 764.265,24 de base, 2.200,00 a menos que o
+programa. A diferença é um servidor só: FULANO DE TAL
+desconta "947 PREVIDÊNCIA FÉRIAS - FUNDO 14,00 308,00" e a folha imprime "Base
+Prev. 0,00" — a coluna não leva a base das férias, como na câmara de Colniza.
+Os 308,00 são do RPPS, e 2.200,00 é a base deles a 14%. A outra folha de
+Cocalinho ("folha de concursado") é uma página digitalizada, sem texto: a
+tela avisa e não lê nada dela.
+
+A câmara de Santa Terezinha chegou como **foto** (Adobe Scan do celular): a
+imagem cobre a página e o texto que o OCR reconheceu fica por cima, invisível
+— "11.158.38", "PREVIDÉNCIA", colunas fora de ordem. Ter texto não a torna
+legível: `leitor_pdf._e_escaneada` trata como digitalizada a página com uma
+imagem cobrindo 90% dela **e** mais texto invisível que visível, e esse texto
+não é lido. Nas folhas de `arquivos_base/` só as duas páginas do Adobe Scan
+cumprem as duas condições; nenhuma folha gerada por sistema tem imagem acima de
+6% da página. A tela pede o PDF gerado pelo sistema, em vez de sugerir um
+leitor novo.
+
+Em Jauru o **total de proventos** da tela não fecha com o da folha (só a
+conferência; não vai no arquivo): o PDF desenha o último dígito do salário por
+baixo da coluna vizinha — "SALARIO BASE 30.00D 17.055,2" para 17.055,26 —, e
+há bloco em que o provento inteiro se perde. Base e contribuição fecham
+servidor a servidor.
+
+Nas folhas ARFolha, além disso, o número de blocos `SERVIDOR:` lidos é
+conferido contra os contados no texto cru do PDF, e a soma de proventos contra
+o "TOTAL PROVENTOS" de cada bloco — bate em todas. Foi essa conferência que
+achou os servidores cuja matrícula curta fica longe do rótulo `SERVIDOR:` (ela
+é alinhada à direita no campo) e cujo nome encosta no `CPF:`: sumiam em
+silêncio 14 em Leverger, **102 em Barra do Garças** (3.233 → 3.335) e **10 em
+Confresa** (534 → 544).
 
 Mais o catálogo real de Aripuanã (`arquivos_base/fontes_pag/`, 1.215 fontes):
 das 59 fontes da folha mensal, 51 casam sozinhas — 726 dos 774 segurados — e as

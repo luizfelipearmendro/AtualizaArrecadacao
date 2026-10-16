@@ -26,11 +26,13 @@ from __future__ import annotations
 
 from typing import List, Optional, Sequence
 
-from . import agili, arfolha, betha, fiorilli
+from . import (agili, arfolha, betha, betha_extrato, centi, duralex,
+               fastreport, fiorilli)
 
 # A ordem nao importa para a escolha (vence a pontuacao), so para a mensagem
 # que a tela mostra quando nenhum reconhece o arquivo.
-LEITORES = (agili, arfolha, betha, fiorilli)
+LEITORES = (agili, arfolha, betha, betha_extrato, centi, duralex, fastreport,
+            fiorilli)
 
 
 def reconhecer(linhas: Sequence[tuple]):
@@ -41,6 +43,11 @@ def reconhecer(linhas: Sequence[tuple]):
         if quantos > pontos:
             melhor, pontos = leitor, quantos
     return melhor
+
+
+def por_nome(nome: str):
+    """O leitor de NOME `nome` -- o que a regra do municipio fixou --, ou None."""
+    return next((l for l in LEITORES if l.NOME == nome), None)
 
 
 def nomes() -> List[str]:

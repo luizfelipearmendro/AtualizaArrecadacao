@@ -95,8 +95,8 @@ def autoteste() -> int:
         # Importar as telas pega o erro de import que so apareceria ao clicar
         # no item da barra lateral -- depois de o programa ja estar aberto.
         from casca import (tela_exportacoes, tela_folha, tela_fontes,
-                           tela_inicio)
-        return "4 telas"
+                           tela_inicio, tela_municipios)
+        return "5 telas"
 
     def _ida_e_volta():
         """Le um PDF de mentira? Nao -- mas confere a conta que leva ao arquivo.
@@ -171,7 +171,16 @@ def autoteste() -> int:
         meses = [l.mes for l in layout.montar(teste, lambda _f: "1001")]
         if meses != [7, 13]:
             raise AssertionError("esperava meses [7, 13], veio {}".format(meses))
-        return "13º separado da mensal"
+
+        # ... e o relatorio que JUNTA processamentos nao e folha de 13o. O
+        # Agili de Paranatinga escreve "(Rescisão, 13º salário, Mensal)" no
+        # subtitulo, e ler isso como 13o mandava a mensal inteira para o mes 13.
+        combinado = Folha(arquivo="teste.pdf",
+                          tipo="Rescisão, 13º salário, Mensal",
+                          competencia=Competencia(2026, 7))
+        if combinado.competencia_de_saida() != Competencia(2026, 7):
+            raise AssertionError("relatório combinado saiu como 13º")
+        return "13º separado da mensal; relatório combinado no mês"
 
     def _nomes_da_previdencia():
         """Cada jeito de escrever a verba de previdência ainda é reconhecido.
@@ -186,12 +195,25 @@ def autoteste() -> int:
 
         devem_entrar = ("FUNDO PREVIDENCIA", "PREVIDENCIA - FUNDO",
                         "PREVIDÊNCIA - FUNDO", "FUNPREV",
-                        "PREVIDENCIA MUNICIPAL")
-        # "PREVIDENCIA - INSS" é regime GERAL, não entra; "ABONO
+                        "PREVIDENCIA MUNICIPAL", "PREV COLNIZA",
+                        "PREV COLNIZA UNICA", "PREV COLNIZA - FÉRIAS",
+                        "PREVILA", "I.M.P.V.B. - INST.PREV.PÚB. MUN.",
+                        "PREVICON - NORMAL", "PREVISERV",
+                        "PARANATINGA PREV FERIAS", "PREVIPORÃ")
+        # "PREVIDENCIA - INSS" e "I.N.S.S." são regime GERAL; a
+        # "COMPLEMENTAR" é a previdência complementar (Aripuanã); os
+        # consignados levam o nome do fundo e são empréstimo; "ABONO
         # PERMANENCIA" é provento; "Base Prev Outros" é rótulo de coluna.
         devem_ficar_de_fora = (("PREVIDENCIA - INSS", "D"),
+                               ("I.N.S.S.", "D"),
+                               ("PREVIDENCIA COMPLEMENTAR", "D"),
+                               ("CONSIGNAÇÃO COMODORO-PREVI 3/96", "D"),
+                               ("CONSIGNADO IMPREV 001/036", "D"),
+                               ("CAPEMISA-PREV/SEG", "D"),
+                               ("BB PREV CONTRIBUIÇÃO DO", "D"),
                                ("ABONO PERMANENCIA", "P"),
-                               ("B. PREV OUTROS", "D"))
+                               ("B. PREV OUTROS", "D"),
+                               ("BASE PREVIDENCIA FERIAS", "D"))
 
         for nome in devem_entrar:
             if not Verba("1", nome, "D", valor=1.0).e_previdencia_do_segurado:
@@ -224,6 +246,73 @@ def autoteste() -> int:
             raise AssertionError("a fonte não ficou marcada como do documento")
         return str(teste.fontes[0])
 
+    def _regras_do_municipio():
+        """A regra do municipio muda o resultado -- e a folha lida nao muda.
+
+        O caso e o de Aripuana: a rescisao com "8847 PREVIDENCIA S/ 13o
+        SALARIO RESCISAO" ao lado da previdencia do mes. Somar da uma linha;
+        separar da duas, a do 13o na competencia 13. E as listas de verbas do
+        municipio SOMAM-SE as da regra geral, nao a substituem.
+        """
+        import dataclasses
+        import tempfile
+
+        from arrecadacao import layout, regras
+        from arrecadacao.complementar import LinhaComplementar
+        from arrecadacao.folha import Competencia, Folha, Segurado, Verba
+
+        jessica = Segurado(matricula="7876", nome="FULANA", tipo_folha="")
+        jessica.verbas = [
+            Verba("4070", "13º SALARIO RESCISÃO", "P", valor=1472.65),
+            Verba("8847", "PREVIDENCIA S/ 13º SALARIO RESCISAO", "D",
+                  base=1472.65, valor=206.17),
+            Verba("8850", "PREVIDENCIA MUNICIPAL", "D", base=504.91,
+                  valor=70.69),
+            Verba("809", "CAPEMISA-PREV/SEG", "D", base=0.0, valor=88.0),
+            Verba("777", "FUNDO DO SERVIDOR", "D", base=0.0, valor=1.0)]
+        lida = Folha(arquivo="r.pdf", tipo="Rescisão",
+                     competencia=Competencia(2026, 8), segurados=[jessica])
+
+        def saida(folha):
+            return [(l.mes, l.base, l.segurado)
+                    for l in layout.montar(folha, lambda _f: "1")]
+
+        somada = saida(regras.aplicar(lida, regras.Regras()))
+        if somada != [(8, 1977.56, 276.86)]:
+            raise AssertionError("somar: {}".format(somada))
+        separada = saida(regras.aplicar(
+            lida, regras.Regras(decimo_na_rescisao=regras.DECIMO_SEPARAR)))
+        if separada != [(8, 504.91, 70.69), (13, 1472.65, 206.17)]:
+            raise AssertionError("separar: {}".format(separada))
+        if len(lida.segurados) != 1 or len(jessica.verbas) != 5:
+            raise AssertionError("aplicar mexeu na folha lida")
+        incluida = saida(regras.aplicar(lida, regras.Regras(incluir=["777"])))
+        if incluida != [(8, 1977.56, 277.86)]:
+            raise AssertionError("incluir pelo código: {}".format(incluida))
+
+        with tempfile.TemporaryDirectory() as pasta:
+            config = regras.Configuracao.carregar(pasta)
+            config.geral.excluir = ["INSS"]
+            config.definir_proprias("ARIPUANÃ", {"excluir": ["CAPEMISA"],
+                                                 "decimo_na_rescisao": "separar"})
+            config.salvar()
+            relida = regras.Configuracao.carregar(pasta).regras_de("ARIPUANÃ")
+            if relida.excluir != ["INSS", "CAPEMISA"] or \
+                    relida.decimo_na_rescisao != "separar":
+                raise AssertionError("configuração relida: {}".format(relida))
+
+        # o CSV complementar troca a base de quem tem a MESMA contribuicao, e
+        # o de outra competencia nao e usado
+        csv = [LinhaComplementar("7876", "FULANA", 2026, 8, 1977.60, 276.86)]
+        com_csv = regras.aplicar(lida, regras.Regras(), ("c.csv", csv))
+        if saida(com_csv) != [(8, 1977.60, 276.86)]:
+            raise AssertionError("CSV complementar: {}".format(saida(com_csv)))
+        outro_mes = [dataclasses.replace(csv[0], mes=7)]
+        sem_csv = regras.aplicar(lida, regras.Regras(), ("c.csv", outro_mes))
+        if saida(sem_csv) != somada:
+            raise AssertionError("CSV de outro mês foi usado")
+        return "13º somado e separado; verbas do município; CSV complementar"
+
     conferir("PyMuPDF (leitura do PDF)", _pymupdf)
     conferir("openpyxl (gravação do xlsx)", _openpyxl)
     conferir("tkinter (janela)", _tk)
@@ -235,6 +324,7 @@ def autoteste() -> int:
     conferir("várias folhas num PDF", _varias_folhas_num_pdf)
     conferir("nomes da verba de previdência", _nomes_da_previdencia)
     conferir("folha sem fonte pagadora", _fonte_do_documento_inteiro)
+    conferir("regras do município", _regras_do_municipio)
 
     linhas.append("")
     linhas.append("RESULTADO: {}".format(

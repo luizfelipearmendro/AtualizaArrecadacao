@@ -1,9 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Tela principal: anexar as folhas, conferir os numeros e exportar.
+"""Tela principal: escolher o municipio, anexar as folhas, conferir e exportar.
 
 O fluxo inteiro em uma tela so, revelado conforme acontece: antes de ler a
 folha nao ha o que conferir, e a tela com tudo visivel e vazia pede para ser
-ignorada.
+ignorada. No alto, a trilha das quatro etapas -- as mesmas do Inicio -- diz
+onde o trabalho esta e o que falta.
+
+O MUNICIPIO vem primeiro, antes do PDF: e ele que traz as regras (o formato da
+folha, o 13o da rescisao, o CSV que Nova Olimpia manda junto) -- ver
+`arrecadacao.regras`. Trocar de municipio depois da leitura reaplica as regras
+sem reler o PDF.
 
 Depois da leitura, a ORDEM na tela e o desenho dela, e a ordem e esta:
 
@@ -49,7 +55,7 @@ from tkinter import filedialog, messagebox, ttk
 from . import arrastar
 from .arrastar import registrar as registrar_arrastar
 from .base_tela import Tela
-from .componentes import (Balao, Botao, Cartao, CaixaCampo, Metrica,
+from .componentes import (Balao, Botao, Cartao, CaixaCampo, Metrica, Passos,
                           Superficie, acompanhar_largura, campo_texto, chip,
                           grade_igual, moldura_de_lista, rotulo_campo,
                           tornar_pesquisavel)
@@ -113,9 +119,9 @@ def _encurtar(texto: str, limite: int) -> str:
 
 class TelaFolha(Tela):
     chave = "folha"
-    titulo = "1 · Folha de pagamento"
-    subtitulo = ("anexe os PDFs, confira os números e exporte o arquivo de "
-                 "importação")
+    titulo = "Arrecadação"
+    subtitulo = ("escolha o município, anexe as folhas, confira os números e "
+                 "exporte o arquivo de importação")
 
     def montar(self) -> None:
         # Varios PDFs, e nao um: a arrecadacao de um mes raramente cabe num
@@ -123,8 +129,15 @@ class TelaFolha(Tela):
         # SISPREVWEB recebe UM arquivo por municipio -- lidos separados, os
         # dois viram duas exportacoes para conferir e importar em duplicata.
         self.caminhos_pdf: List[str] = []
+        # O CSV que alguns municipios mandam junto (Nova Olimpia). Um so: e um
+        # arquivo por competencia, e dois seriam duas versoes da mesma coisa.
+        self.caminho_complementar: str = ""
         self.linhas: List[Any] = []
+        self._exportou = False
+        self._silencio_fontes = False
 
+        self._montar_trilha()
+        self._montar_municipio()
         self._montar_arquivo()
         self._montar_competencia()
         self._montar_fontes()
@@ -135,6 +148,138 @@ class TelaFolha(Tela):
     def caminho_pdf(self) -> Optional[str]:
         """O primeiro documento. So para quem precisa de UM -- a pasta de saida."""
         return self.caminhos_pdf[0] if self.caminhos_pdf else None
+
+    # ------------------------------------------------------------------ #
+    # a trilha das etapas
+    # ------------------------------------------------------------------ #
+    def _montar_trilha(self) -> None:
+        """As quatro etapas do Inicio, aqui pintadas com o estado de cada uma."""
+        from .tela_inicio import ETAPAS
+
+        self.cartao_trilha = Cartao(self.corpo, padding=(18, 10))
+        self.cartao_trilha.pack(fill="x", pady=(0, GAP))
+        self.trilha = Passos(self.cartao_trilha.conteudo, ETAPAS,
+                             ao_clicar=self._clique_na_trilha)
+        self.trilha.pack(fill="x")
+
+    def _clique_na_trilha(self, etapa: int) -> None:
+        if etapa == 0:
+            self.combo_municipio.focus_set()
+        elif etapa == 1:
+            self._escolher()
+
+    def _atualizar_trilha(self) -> None:
+        """Onde o trabalho esta: feito em verde, a vez em navy, o resto apagado."""
+        feita, atual, pendente = Passos.FEITA, Passos.ATUAL, Passos.PENDENTE
+        regras = self.janela.regras_atuais()
+        municipio = self.estado.municipio
+        lida = self.estado.tem_folha()
+
+        estados = [feita if municipio else atual]
+        detalhes = [municipio or "escolha o município"]
+
+        falta_csv = bool(regras.complementar) and not self.caminho_complementar
+        if lida:
+            estados.append(atual if falta_csv else feita)
+            detalhes.append("{} segurado(s){}".format(
+                self.estado.folha.total_segurados,
+                " · falta o CSV" if falta_csv else ""))
+        else:
+            estados.append(atual if municipio else pendente)
+            quantos = len(self.caminhos_pdf)
+            detalhes.append(
+                "{} documento(s) anexado(s)".format(quantos) if quantos
+                else "anexe os PDFs" + (" e o CSV" if regras.complementar
+                                        else ""))
+
+        if lida:
+            sem_codigo = len(self.janela.fontes_pendentes())
+            com_pendencia = sum(1 for l in self.linhas if l.tem_pendencia)
+            if sem_codigo:
+                estados.append(atual)
+                detalhes.append("{} fonte(s) sem código".format(sem_codigo))
+            elif com_pendencia:
+                estados.append(atual)
+                detalhes.append("{} linha(s) com pendência".format(com_pendencia))
+            else:
+                estados.append(feita)
+                detalhes.append("sem pendências")
+        else:
+            estados.append(pendente)
+            detalhes.append("números, avisos e fontes")
+
+        if self._exportou:
+            estados.append(feita)
+            detalhes.append("arquivo gerado")
+        else:
+            estados.append(atual if lida and estados[2] == feita else pendente)
+            detalhes.append("o arquivo do SISPREVWEB")
+        self.trilha.marcar(estados, detalhes)
+
+    # ------------------------------------------------------------------ #
+    # passo 0: o municipio, que traz as regras
+    # ------------------------------------------------------------------ #
+    def _montar_municipio(self) -> None:
+        """O municipio decide as regras E o catalogo -- por isso vem primeiro.
+
+        Vem adivinhado do cabecalho da folha quando ninguem escolheu antes, e
+        fica a vista justamente porque adivinhar errado nao da erro: casa com o
+        cadastro da cidade errada e credita a arrecadacao na fonte errada.
+        """
+        cartao = self.cartao_municipio = Cartao(
+            self.corpo, titulo="Município", glifo="pessoas",
+            legenda="Escolha antes de ler: o município traz as regras dele.")
+        cartao.pack(fill="x", pady=(0, GAP))
+        Botao(cartao.acoes, text="AJUSTAR AS REGRAS",
+              command=lambda: self.janela.ir_para("municipios")).pack(
+            side="right")
+
+        linha = tk.Frame(cartao.conteudo, bg=COR_CARTAO)
+        linha.pack(fill="x")
+
+        # A caixa guarda o ROTULO ("✓  ARIPUANÃ"), e nao o nome puro: a marca
+        # do catalogo importado precisa aparecer na lista fechada tambem, que e
+        # onde se olha antes de trocar. `_municipio_escolhido` desfaz.
+        self.var_municipio = tk.StringVar()
+        self._municipio_de_rotulo: Dict[str, str] = {}
+        moldura_mun = moldura_de_lista(linha)
+        moldura_mun.pack(side="left", anchor="n")
+        self.combo_municipio = ttk.Combobox(
+            moldura_mun.corpo, textvariable=self.var_municipio,
+            width=30, style="Plano.TCombobox")
+        self.combo_municipio.pack()
+        self._rotulos_municipio = []
+        tornar_pesquisavel(self.combo_municipio,
+                           lambda: self._rotulos_municipio)
+        moldura_mun.acompanhar(self.combo_municipio)
+        self.combo_municipio.bind("<MouseWheel>", lambda e: "break")
+
+        self.var_regras = tk.StringVar(value="")
+        self.rotulo_regras = tk.Label(
+            linha, textvariable=self.var_regras, bg=COR_CARTAO, fg=COR_MUDO,
+            font=fonte(T_LEGENDA), anchor="w", justify="left")
+        self.rotulo_regras.pack(side="left", fill="x", expand=True,
+                                padx=(GAP, 0))
+        acompanhar_largura(self.rotulo_regras, folga=20)
+
+        self.var_municipio.trace_add("write",
+                                     lambda *_a: self._trocar_municipio())
+
+    def _pintar_regras(self) -> None:
+        """O que as regras do municipio escolhido vao fazer com a folha."""
+        if not self.estado.municipio:
+            self.var_regras.set("Nenhum município escolhido — valem as regras "
+                                "gerais, e o catálogo de fontes fica sem "
+                                "cidade para casar.")
+            return
+        regras = self.janela.regras_atuais()
+        proprias = self.janela.config.configurado(self.estado.municipio)
+        texto = "{}:  {}".format(
+            "Regras próprias" if proprias else "Segue as regras gerais",
+            "  ·  ".join(regras.resumo()))
+        if regras.observacoes:
+            texto += "\n" + regras.observacoes
+        self.var_regras.set(texto)
 
     # ------------------------------------------------------------------ #
     # passo 1: o arquivo
@@ -246,21 +391,27 @@ class TelaFolha(Tela):
                 text=self.LEGENDA_ARQUIVO)
 
     LEGENDA_ARQUIVO = ("Os PDFs da folha — a da prefeitura e a da câmara "
-                       "entram juntas, e saem num arquivo só.")
+                       "entram juntas, e saem num arquivo só. O CSV "
+                       "complementar, quando o município manda, vem junto.")
 
     def _descrever_documentos(self) -> str:
         """"2 documentos · geral.pdf, camara.pdf" -- para a linha encolhida."""
         nomes = [Path(c).name for c in self.caminhos_pdf]
+        extra = (" + complementar {}".format(Path(self.caminho_complementar).name)
+                 if self.caminho_complementar else "")
         if not nomes:
-            return "nenhum documento escolhido"
+            return ("só o complementar " + Path(self.caminho_complementar).name
+                    if self.caminho_complementar else "nenhum documento escolhido")
         if len(nomes) == 1:
-            return nomes[0]
-        return "{} documentos · {}".format(len(nomes), ", ".join(nomes))
+            return nomes[0] + extra
+        return "{} documentos · {}{}".format(len(nomes), ", ".join(nomes), extra)
 
     def _escolher(self) -> None:
         caminhos = filedialog.askopenfilenames(
-            title="Folhas de pagamento (PDF)",
-            filetypes=[("PDF", "*.pdf"), ("Todos os arquivos", "*.*")])
+            title="Folhas de pagamento (PDF) e arquivo complementar (CSV)",
+            filetypes=[("PDF ou CSV", "*.pdf *.csv"), ("PDF", "*.pdf"),
+                       ("CSV complementar", "*.csv"),
+                       ("Todos os arquivos", "*.*")])
         if caminhos:
             self._definir(list(caminhos))
 
@@ -271,11 +422,12 @@ class TelaFolha(Tela):
         duas -- trocar uma pela outra em silencio seria perder a primeira sem
         nenhum sinal. Para recomecar ha o X de cada linha e o botao de trocar.
         """
-        aceitos, recusados = arrastar.separar(caminhos, (".pdf",))
+        aceitos, recusados = arrastar.separar(caminhos, (".pdf", ".csv"))
         if not aceitos:
             messagebox.showwarning(
                 APP_NOME,
-                "A folha de pagamento é um arquivo .pdf.\n\nRecebido: "
+                "A folha de pagamento é um arquivo .pdf (e o complementar, "
+                ".csv).\n\nRecebido: "
                 "{}".format(", ".join(c.name for c in recusados[:4])))
             return
         self._definir([str(c) for c in aceitos], acrescentar=True)
@@ -285,7 +437,16 @@ class TelaFolha(Tela):
     def _definir(self, caminhos, acrescentar: bool = False) -> None:
         if isinstance(caminhos, str):
             caminhos = [caminhos]
-        novos = list(self.caminhos_pdf) if acrescentar else []
+        # O CSV vai para o lugar do complementar, e nao para a fila de PDFs: e
+        # um arquivo de outro tipo, lido de outro jeito (ver
+        # `arrecadacao.complementar`). Um novo substitui o anterior.
+        csvs = [c for c in caminhos if c.lower().endswith(".csv")]
+        caminhos = [c for c in caminhos if not c.lower().endswith(".csv")]
+        if csvs:
+            self.caminho_complementar = csvs[-1]
+        elif not acrescentar:
+            self.caminho_complementar = ""
+        novos = list(self.caminhos_pdf) if acrescentar or not caminhos else []
         for caminho in caminhos:
             if caminho not in novos:
                 novos.append(caminho)
@@ -298,16 +459,20 @@ class TelaFolha(Tela):
         self.janela.status(
             "Pronto para ler {}.".format(self._descrever_documentos())
             if self.caminhos_pdf else "Anexe o PDF da folha de pagamento.")
+        self._atualizar_trilha()
 
     def _montar_lista_documentos(self) -> None:
         """Uma linha por documento escolhido, com o X para tirar."""
         for filho in self.lista_documentos.winfo_children():
             filho.destroy()
-        if not self.caminhos_pdf:
+        todos = list(self.caminhos_pdf)
+        if self.caminho_complementar:
+            todos.append(self.caminho_complementar)
+        if not todos:
             self.lista_documentos.pack_forget()
             return
 
-        for caminho in self.caminhos_pdf:
+        for caminho in todos:
             linha = tk.Frame(self.lista_documentos, bg=COR_CARTAO)
             linha.pack(fill="x", pady=(6, 0))
             fechar = tk.Label(linha, text="✕", bg=COR_CARTAO, fg=COR_MUDO,
@@ -316,7 +481,10 @@ class TelaFolha(Tela):
             fechar.bind("<Button-1>",
                         lambda _e, c=caminho: self._tirar_documento(c))
             Balao(fechar, "Tirar este documento da lista.")
-            rotulo = tk.Label(linha, text=Path(caminho).name, bg=COR_CARTAO,
+            nome = Path(caminho).name
+            if caminho == self.caminho_complementar:
+                nome = "{}   (arquivo complementar)".format(nome)
+            rotulo = tk.Label(linha, text=nome, bg=COR_CARTAO,
                               fg=COR_TITULO, font=fonte(T_LEGENDA),
                               anchor="w")
             rotulo.pack(side="left", fill="x", expand=True)
@@ -326,6 +494,8 @@ class TelaFolha(Tela):
 
     def _tirar_documento(self, caminho: str) -> None:
         self.caminhos_pdf = [c for c in self.caminhos_pdf if c != caminho]
+        if caminho == self.caminho_complementar:
+            self.caminho_complementar = ""
         self.var_arquivo.set(self._descrever_documentos())
         self._montar_lista_documentos()
         self.btn_ler.configure(
@@ -383,31 +553,9 @@ class TelaFolha(Tela):
         self.combo_categoria.pack()
         moldura_cat.acompanhar(self.combo_categoria)
         self.combo_categoria.bind("<MouseWheel>", lambda e: "break")
-
-        # O municipio decide contra QUAL catalogo as fontes desta folha vao
-        # casar. Vem adivinhado do cabecalho ("DE ARIPUANA-MT") e fica a vista
-        # justamente porque adivinhar errado nao da erro: casa com o cadastro
-        # da cidade errada e credita a arrecadacao toda na fonte errada.
-        municipio = tk.Frame(campos, bg=COR_CARTAO)
-        municipio.grid(row=0, column=3, sticky="we")
-        rotulo_campo(municipio, "Município").pack(anchor="w", pady=(0, 4))
-        # A caixa guarda o ROTULO ("✓  ARIPUANÃ"), e nao o nome puro: a marca
-        # do catalogo importado precisa aparecer na lista fechada tambem, que e
-        # onde se olha antes de trocar. `_municipio_escolhido` desfaz.
-        self.var_municipio = tk.StringVar()
-        self._municipio_de_rotulo: Dict[str, str] = {}
-        moldura_mun = moldura_de_lista(municipio)
-        moldura_mun.pack(anchor="w")
-        self.combo_municipio = ttk.Combobox(
-            moldura_mun.corpo, textvariable=self.var_municipio,
-            width=28, style="Plano.TCombobox")
-        self.combo_municipio.pack()
-        self._rotulos_municipio = []
-        tornar_pesquisavel(self.combo_municipio,
-                           lambda: self._rotulos_municipio)
-        moldura_mun.acompanhar(self.combo_municipio)
-        self.combo_municipio.bind("<MouseWheel>", lambda e: "break")
-        grade_igual(campos, 4)
+        # O municipio mudou-se para o cartao proprio, no alto: ele vem ANTES da
+        # leitura, porque traz as regras dela.
+        grade_igual(campos, 3)
 
         # O que foi lido do cabecalho ("Mensal - DE ARIPUANA-MT") vai para a
         # LEGENDA do cartao, e nao para uma linha propria: uma linha a mais
@@ -416,8 +564,6 @@ class TelaFolha(Tela):
 
         for variavel in (self.var_ano, self.var_mes, self.var_categoria):
             variavel.trace_add("write", lambda *_a: self._remontar())
-        self.var_municipio.trace_add("write",
-                                     lambda *_a: self._trocar_municipio())
 
     # ------------------------------------------------------------------ #
     # passo 3: as fontes pagadoras que o catalogo nao resolveu
@@ -984,20 +1130,36 @@ class TelaFolha(Tela):
             self._silencio_fontes = False
 
     def _trocar_municipio(self) -> None:
-        """Outro municipio, outro catalogo: recasa tudo e refaz a lista."""
-        if self._silencio_fontes or not self.estado.tem_folha():
+        """Outro municipio: outras regras e outro catalogo.
+
+        Antes da leitura, so guarda a escolha -- as regras valem quando o PDF
+        for lido. Depois, reaplica as regras sobre a folha ja lida e recasa as
+        fontes, sem reler o PDF.
+        """
+        if self._silencio_fontes:
             return
         escolhido = self._municipio_escolhido()
-        # Rotulo que nao esta na lista nao apaga o municipio escolhido: a caixa
-        # e `readonly`, entao isso so acontece por engano de codigo -- e o
-        # estrago seria mudo, com as 59 fontes voltando a ficar sem codigo.
+        # Rotulo que nao esta na lista nao apaga o municipio escolhido: meio
+        # nome digitado nao e escolha, e o estrago seria mudo, com as 59
+        # fontes voltando a ficar sem codigo.
         if not escolhido or escolhido == self.estado.municipio:
             return
         self.estado.municipio = escolhido
-        self.janela.casar_fontes()
-        self._montar_lista_fontes()
-        self._mostrar_cartao_fontes(bool(self.janela.fontes_pendentes()))
-        self._remontar()
+        self._pintar_regras()
+        if self.estado.folha_lida is not None:
+            self.janela.aplicar_regras()
+            self._aplicar_categoria()
+            self._montar_lista_fontes()
+            self._mostrar_cartao_fontes(bool(self.janela.fontes_pendentes()))
+            self._remontar()
+        self.janela.atualizar_barra()
+        self._atualizar_trilha()
+
+    def _aplicar_categoria(self) -> None:
+        """A categoria da regra do municipio, que a tela deixa corrigir."""
+        categoria = self.janela.regras_atuais().categoria
+        if categoria and categoria != self.var_categoria.get():
+            self.var_categoria.set(categoria)
 
     def _sincronizar_fontes(self) -> None:
         """Recasa ao voltar para esta tela: o catalogo pode ter sido importado.
@@ -1252,7 +1414,7 @@ class TelaFolha(Tela):
             return
         if mostrar:
             self.cartao_exportacao.pack(side="bottom", fill="x", pady=(GAP, 0),
-                                        before=self.cartao_arquivo)
+                                        before=self.cartao_trilha)
         else:
             self.cartao_exportacao.pack_forget()
 
@@ -1273,8 +1435,31 @@ class TelaFolha(Tela):
         if not caminhos:
             return
 
+        regras = self.janela.regras_atuais()
+        complementar = self.caminho_complementar
+        if regras.complementar and not complementar:
+            if not messagebox.askyesno(
+                    APP_NOME,
+                    "{} manda um arquivo complementar (CSV) junto com a folha, "
+                    "e ele não foi anexado.\n\nSem ele a base de cada "
+                    "servidor é deduzida da contribuição e pode ficar alguns "
+                    "centavos longe da real.\n\nLer só o PDF mesmo "
+                    "assim?".format(self.estado.municipio)):
+                return
+
         def tarefa(progresso):
-            return extracao.ler_varios(caminhos, progresso)
+            from arrecadacao.complementar import (ArquivoComplementarInvalido,
+                                                  ler_csv_sisprevweb)
+            folha = extracao.ler_varios(caminhos, progresso, regras.formato)
+            lido = None
+            if complementar:
+                nome = Path(complementar).name
+                try:
+                    lido = (nome, ler_csv_sisprevweb(complementar))
+                except (OSError, ArquivoComplementarInvalido) as erro:
+                    folha.avisos_de_leitura.append(
+                        "O arquivo complementar não foi usado: {}".format(erro))
+            return {"folha": folha, "complementar": lido}
 
         self.painel.pack_forget()
         self.quadro_numeros.pack_forget()
@@ -1294,8 +1479,9 @@ class TelaFolha(Tela):
         self.btn_ler.configure(state="disabled")
 
     def ao_concluir(self, resultado: Any) -> None:
-        folha = resultado
+        folha = resultado["folha"]
         self.btn_ler.configure(state="normal")
+        self._exportou = False
 
         if not folha.segurados:
             self.estado.limpar()
@@ -1309,18 +1495,32 @@ class TelaFolha(Tela):
             self.janela.status("Nada encontrado no PDF.")
             return
 
-        self.estado.folha = folha
+        self.estado.folha_lida = folha
+        self.estado.complementar = resultado["complementar"]
         self.estado.caminho_pdf = folha.arquivo
 
-        # O municipio sai do cabecalho da folha ("1 - DE ARIPUANA-MT") e e o
-        # que decide contra qual catalogo as fontes vao casar. So e adivinhado
-        # quando ainda nao ha um escolhido: trocar o municipio embaixo de quem
-        # acabou de corrigi-lo a mao seria desfazer a correcao.
+        # O municipio sai do cabecalho da folha ("1 - DE ARIPUANA-MT") quando
+        # ninguem o escolheu antes. Escolhido, ele manda -- mas se a folha diz
+        # outra cidade, a tela avisa: e o jeito de perceber que se anexou o PDF
+        # do municipio errado antes de creditar nas fontes erradas.
         from arrecadacao.municipios import reconhecer
+        lista = self.janela.config.lista_de_municipios()
+        lidos = {m for m in (reconhecer(o.entidade, lista)
+                             for o in folha.origens if o.entidade) if m}
         if not self.estado.municipio:
-            self.estado.municipio = reconhecer(folha.entidade) or ""
+            self.estado.municipio = next(iter(lidos), "") if len(lidos) == 1 \
+                else (reconhecer(folha.entidade, lista) or "")
+        estranhos = sorted(lidos - {self.estado.municipio})
+        if estranhos:
+            folha.avisos_de_leitura.append(
+                "O município escolhido é {}, mas o cabeçalho da folha fala em "
+                "{}. Confira se os documentos são deste município.".format(
+                    self.estado.municipio, ", ".join(estranhos)))
         self._recarregar_municipios()
-        self.janela.casar_fontes()
+        self._pintar_regras()
+        self.janela.aplicar_regras()
+        folha = self.estado.folha
+        self._aplicar_categoria()
 
         competencia = folha.competencia_de_saida()
         # Preencher os campos dispara `_remontar` pelo trace -- e por isso a
@@ -1418,6 +1618,7 @@ class TelaFolha(Tela):
         self._atualizar_resumo_fontes()
         self._pintar_conferencia_fontes()
         self.janela.atualizar_barra()
+        self._atualizar_trilha()
 
     def _competencia_escolhida(self):
         """A competencia dos campos, ou None se estiverem ilegiveis."""
@@ -1529,6 +1730,8 @@ class TelaFolha(Tela):
             return
 
         self.estado.ultima_exportacao = destino
+        self._exportou = True
+        self._atualizar_trilha()
         competencia = self._competencia_escolhida()
         self.janela.indice.registrar(
             destino, extensao,
@@ -1574,10 +1777,18 @@ class TelaFolha(Tela):
     # ------------------------------------------------------------------ #
     def ao_entrar(self) -> None:
         # O codigo de uma fonte pode ter sido cadastrado na outra tela desde a
-        # ultima vez que esta apareceu.
+        # ultima vez que esta apareceu -- e as regras do municipio podem ter
+        # mudado na tela Municipios, ou o municipio ter sido escolhido la.
+        self._recarregar_municipios()
+        self._pintar_regras()
+        if self.estado.folha_lida is not None:
+            self.janela.aplicar_regras()
         if self.estado.tem_folha():
             self._sincronizar_fontes()
             self._remontar()
             self.janela.status("Confira a tabela e exporte.")
+        elif not self.estado.municipio:
+            self.janela.status("Escolha o município e anexe o PDF da folha.")
         else:
             self.janela.status("Anexe o PDF da folha de pagamento.")
+        self._atualizar_trilha()

@@ -58,6 +58,13 @@ ROTULOS_VERBA = (
 # contribuicao certa e base ZERO, que e o tipo de erro que passa na conferencia
 # por amostragem.
 VERBAS_PELA_DIREITA = ("provento", "desconto")
+# O que as colunas vizinhas deixam colado no fim da descricao comprida: a
+# "992 PREVIDENCIA FUNDO 13o SALARIO PROPORC" de Barra do Garcas termina em
+# x=234 e o "14,0000" da coluna seguinte comeca em 237, e a descricao saia
+# "... PROPORC 14,0000 Fixo". Numero com virgula e marca de parcela ("Fixo",
+# "13/120") nao terminam nome de verba nenhum.
+RE_COLADO_NA_DESCRICAO = re.compile(
+    r"(?:\s+(?:\d[\d.]*,\d+|Fixo|\d+/\d+))+\s*$", re.IGNORECASE)
 
 # "FOLHA DE PAGAMENTO - 09/2026 - 1 - NORMAL": competencia e tipo na mesma
 # linha. O tipo e o que vem depois do ultimo tracinho -- NORMAL, RESCISAO,
@@ -73,8 +80,10 @@ RE_TIPO_DA_FOLHA = re.compile(
     r"(\d{1,2})\s*/\s*(\d{4})", re.IGNORECASE)
 # A entidade pode ser a prefeitura ou a camara -- e camara, aqui, nao e
 # detalhe: a folha da camara costuma vir sem grupo de fonte pagadora nenhum.
+# O "MUNICIPAL" e opcional: Chapada escreve "PREFEITURA DE CHAPADA DOS
+# GUIMARAES MT", e exigir a palavra deixava a entidade em branco.
 RE_ENTIDADE = re.compile(
-    r"^((?:PREFEITURA|C.MARA)\s+MUNICIPAL\s+DE\s+.+)$", re.IGNORECASE)
+    r"^((?:PREFEITURA|C.MARA)\s+(?:MUNICIPAL\s+)?DE\s+.+)$", re.IGNORECASE)
 # O grupo de fonte pagadora. Rosario Oeste chama de SUBFOLHA e Barra do
 # Garcas de SECRETARIA, mas os dois dizem a mesma coisa: "<numero> - <nome>".
 RE_SUBFOLHA = re.compile(
@@ -135,7 +144,10 @@ def _ler_cabecalho_da_folha(linhas: Sequence[tuple], folha: Folha) -> None:
                 continue
 
         if not folha.entidade:
-            achado = RE_ENTIDADE.match(texto)
+            # So a primeira celula: na mesma linha, a direita, vem "Hora:
+            # 09:20" -- e o nome da prefeitura nao pode levar o relogio junto.
+            primeira = linha.celulas[0].texto.strip() if linha.celulas else texto
+            achado = RE_ENTIDADE.match(primeira)
             if achado:
                 folha.entidade = achado.group(1).strip()
                 continue
@@ -241,7 +253,10 @@ def _abrir_servidor(linhas: Sequence[tuple], indice: int, pagina: int,
         for vizinha in (indice - 1, indice + 1):
             if 0 <= vizinha < len(linhas):
                 aproveitar(linhas[vizinha][0], exigir_matricula=True)
+    if not RE_MATRICULA_NOME.match(campos["servidor"]):
+        _celula_depois_do_rotulo(rotulos, campos)
 
+    _separar_rotulos_colados(campos)
     achado = RE_MATRICULA_NOME.match(campos["servidor"])
     if achado is None:
         return None
@@ -255,6 +270,53 @@ def _abrir_servidor(linhas: Sequence[tuple], indice: int, pagina: int,
         fonte=fonte,
         pagina=pagina,
     )
+
+
+def _celula_depois_do_rotulo(rotulos: Linha, campos: Dict[str, str]) -> None:
+    """O servidor e a celula logo depois de "SERVIDOR:", longe ou nao dele.
+
+    A matricula vem alinhada a direita no campo: "1449.1" comeca em x=85, mas
+    "286.1" so em x=108, a 30 pontos do rotulo -- vao demais para a coluna do
+    servidor ir alem do proprio "SERVIDOR:". E o nome comprido ainda encosta no
+    "CPF:", e a celula "286.1 - FULANA ... SANTO CPF: 123.456.789-09" fica
+    longe das duas colunas. Eram 14 dos 231 servidores da folha normal de Santo
+    Antonio de Leverger. O CPF colado, `_separar_rotulos_colados` devolve.
+    """
+    celulas = [celula.texto.strip() for celula in rotulos.celulas]
+    for posicao, texto in enumerate(celulas[:-1]):
+        if texto.upper() != "SERVIDOR:":
+            continue
+        seguinte = celulas[posicao + 1]
+        if RE_MATRICULA_NOME.match(seguinte):
+            campos["servidor"] = seguinte
+            if campos.get("cpf") and campos["cpf"] in seguinte:
+                campos["cpf"] = ""
+        return
+
+
+def _separar_rotulos_colados(campos: Dict[str, str]) -> None:
+    """Devolve a cada campo o pedaco que veio colado no anterior.
+
+    O nome comprido termina encostado no rotulo seguinte -- "FULANA DE TAL DA
+    SILVA DOS SAN" acaba em x=295 e "CPF:" comeca em 294 --, e sem vao entre
+    os dois a celula e uma so: o nome saia "... DOS SAN CPF: 123.456.789-09" e
+    o CPF vazio. Eram 282 dos 3.233 servidores de Barra do Garcas. O rotulo
+    escrito DENTRO do valor e a marca de onde cortar.
+    """
+    ordem = [chave for chave, _rotulo in ROTULOS_SERVIDOR if chave in campos]
+    for posicao, chave in enumerate(ordem):
+        for seguinte in ordem[posicao + 1:]:
+            rotulo = dict(ROTULOS_SERVIDOR)[seguinte]
+            valor = campos[chave]
+            corte = valor.upper().find(" " + rotulo.upper())
+            if corte < 0:
+                continue
+            campos[chave] = valor[:corte].strip()
+            resto = _sem_rotulo(valor[corte:], rotulo)
+            # Se o campo ja tinha valor proprio, ele fica: o pedaco colado so
+            # podia ser o mesmo valor repetido.
+            if resto and not campos[seguinte]:
+                campos[seguinte] = resto
 
 
 def _sem_rotulo(valor: str, rotulo: str) -> str:
@@ -295,7 +357,8 @@ def _ler_verba(linha: Linha, colunas: Dict[str, Coluna]) -> Optional[Verba]:
     base, quantidade = _base_e_qtd(campos)
     return Verba(
         codigo=codigo,
-        descricao=campos.get("descricao", "").strip(),
+        descricao=RE_COLADO_NA_DESCRICAO.sub(
+            "", campos.get("descricao", "")).strip(),
         tipo=tipo,
         referencia=quantidade,
         base=base,

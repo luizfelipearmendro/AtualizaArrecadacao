@@ -174,6 +174,9 @@ POR_TRUNCADO = "catálogo (nome truncado na folha)"
 POR_SEM_SUFIXO = "catálogo (sem o complemento entre parênteses)"
 POR_NUMERO = "catálogo (só o número — o nome não confere)"
 POR_ESCOLHA = "escolhido por você"
+# O CSV que o municipio manda junto ja traz o codigo de cada servidor -- ver
+# `regras.fontes_do_complementar`. Vale onde nao ha catalogo nem escolha.
+POR_COMPLEMENTAR = "arquivo complementar do município"
 SEM_CATALOGO = "catálogo não importado"
 AMBIGUO = "mais de uma fonte com este número"
 AUSENTE = "número não existe no catálogo"

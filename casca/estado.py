@@ -35,7 +35,15 @@ class Estado:
     """Memoria viva do aplicativo enquanto ele esta aberto."""
 
     pasta_base: Path = field(default_factory=Path.cwd)
-    folha: Any = None                  # arrecadacao.folha.Folha
+    # DUAS folhas: a lida do PDF, que nao muda, e a que as telas mostram, com
+    # as regras do municipio aplicadas (`regras.aplicar`). Trocar uma regra
+    # refaz a segunda a partir da primeira -- sem reler o PDF, e sem aplicar a
+    # regra nova por cima da velha.
+    folha_lida: Any = None             # arrecadacao.folha.Folha
+    folha: Any = None                  # a mesma, com as regras aplicadas
+    # O arquivo complementar (o CSV de Nova Olimpia): (nome, linhas).
+    complementar: Any = None
+    caminho_complementar: str = ""
     linhas: List[Any] = field(default_factory=list)   # layout.Linha
     caminho_pdf: str = ""
     ultima_exportacao: str = ""
@@ -60,7 +68,9 @@ class Estado:
             competencia or "sem competência", self.folha.total_segurados)
 
     def limpar(self) -> None:
+        self.folha_lida = None
         self.folha = None
+        self.complementar = None
         self.linhas = []
         self.caminho_pdf = ""
         self.correspondencias = {}

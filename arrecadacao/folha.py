@@ -32,21 +32,47 @@ CATEGORIAS_ACEITAS = ("Efetivo", "Comissionado", "Estável",
 # abaixo do "FOLHA DE PAGAMENTO - 08/2026".
 MES_DECIMO_TERCEIRO = 13
 
-# Como cada folha chama o desconto previdenciario do servidor. E' por estes
-# nomes que a verba e reconhecida -- ver `Verba.e_previdencia_do_segurado`.
+# Como reconhecer o desconto previdenciario do servidor pela descricao -- ver
+# `Verba.e_previdencia_do_segurado`.
 #
-# A lista e explicita de proposito, e cada item entrou por causa de uma folha
-# de verdade: "PREVIDENCIA" cobre "FUNDO PREVIDENCIA" (Rosario Oeste),
-# "PREVIDENCIA - FUNDO" (Barra do Garcas) e "PREVIDÊNCIA - FUNDO"
-# (Primavera); "FUNPREV" e como a camara de Sao Jose do Povo chama a mesma
-# coisa. Sem ele, os cinco servidores de la sairiam com base e contribuicao
-# zero -- e sem erro nenhum na tela, que e o jeito mais facil de recolher a
-# menos.
+# Comecou como uma LISTA de nomes, um por municipio, e a lista perdeu a
+# corrida: cada prefeitura batiza o proprio fundo. "PREVIDENCIA - FUNDO"
+# (Primavera, Barra do Garcas, Comodoro), "FUNDO PREVIDENCIA" (Rosario), e
+# depois "FUNPREV" (Sao Jose do Povo), "PREV COLNIZA", "PREVILA" (Vila Bela),
+# "PREVICON" (Confresa), "PREVISERV" (Chapada), "PARANATINGA PREV",
+# "PREVIPORA" (Tabapora) -- e na camara de Vila Bela "I.M.P.V.B. -
+# INST.PREV.PUB. MUN.". O nome que falta na lista nao da erro: o servidor sai
+# com base e contribuicao ZERO, em silencio, que e o jeito mais facil de
+# recolher a menos. Sete folhas de uma vez sairam assim.
 #
-# Reconhecer por PREFIXO curto ("PREV") seria tentador e erraria: a folha de
-# Sao Jose do Povo tem a coluna "B. Prev Outros" e a de Rosario tem "Base
-# Previdencia Ferias", e nenhuma das duas e verba.
-NOMES_DA_PREVIDENCIA = ("PREVIDENCIA", "FUNPREV")
+# Por isso a regra e de PALAVRA: uma palavra que comeca por "PREVI", ou a
+# palavra "PREV" sozinha, ou um dos nomes que nao tem nem isso. Palavra
+# inteira, e nao pedaco: "CONSIGNADO IMPREV" (emprestimo, em Primavera) tem
+# "PREV" no meio e nao entra.
+RE_NOME_DA_PREVIDENCIA = re.compile(
+    r"\bPREVI\w*|\bPREV\b|\bFUNPREV\b|\bRPPS\b|\bI\.M\.P\.V\.B\.")
+# ... e o que tem cara de previdencia e NAO e a do regime proprio:
+# - INSS: o regime geral. Barra do Garcas tem "942 PREVIDENCIA - FUNDO" e
+#   "919 PREVIDENCIA - INSS" lado a lado, e 1.765 dos 3.233 servidores sao do
+#   INSS; a camara de Vila Bela escreve "I.N.S.S.".
+# - COMPLEMENTAR / PRIVADA: a previdencia complementar. Em Aripuana, "8900
+#   PREVIDENCIA COMPLEMENTAR" e 8,5% sobre o que passa do teto do RPPS -- a
+#   propria folha diz que a base do RPPS desses servidores e so o teto
+#   ("Base Patronal para RPPS 8.475,55").
+# - CONSIGNACAO / EMPRESTIMO: emprestimo tomado no fundo, como a "CONSIGNACAO
+#   COMODORO-PREVI 3/96". O nome do fundo esta la, a contribuicao nao.
+# - seguradora: "809 CAPEMISA-PREV/SEG" (Santo Antonio de Leverger) e plano
+#   de previdencia privada e seguro -- 616,09 em 7 servidores que iam somar
+#   na contribuicao do RPPS. E o "715 BB PREV CONTRIBUICAO DO" de Jauru, a
+#   previdencia complementar do Banco do Brasil a 8,5%: somada, ela ainda
+#   tirava o bloco do caso "uma previdencia so", e a base do servidor saia
+#   deduzida da referencia "1.00" da 712 -- 118.658,00 em vez de 8.475,55.
+# - rotulo de coluna lido como verba: "B. Prev Outros" (Sao Jose do Povo),
+#   "Base Previdencia Ferias" (Rosario).
+RE_NAO_E_DO_RPPS = re.compile(
+    r"\bINSS\b|\bI\.N\.S\.S\b|COMPLEMENTAR|PRIVADA|CONSIG|EMPREST"
+    r"|CAPEMISA|\bSEG(?:URO)?\b|\bBB\s*-?\s*PREV|BRASILPREV"
+    r"|^\s*(?:B\.|BASE\b)")
 
 
 @dataclass(frozen=True)
@@ -75,6 +101,11 @@ class Verba:
     base: Optional[float] = None
     integral: Optional[float] = None
     valor: Optional[float] = None
+    # A regra do MUNICIPIO decidiu -- ver `arrecadacao.regras`. None e "a
+    # regra geral decide", que e quase sempre. Existe porque a regra geral e
+    # por palavra, e sempre havera a verba de um municipio que ela erra: o
+    # fundo batizado sem "PREV" no nome, ou o seguro com "PREV" no nome.
+    forcado: Optional[bool] = None
 
     @property
     def e_previdencia_do_segurado(self) -> bool:
@@ -88,16 +119,13 @@ class Verba:
         (13o adiantamento) e 8847 (13o rescisao), e nenhuma consignacao se
         chama previdencia.
         """
-        texto = _caixa_alta_sem_acento(self.descricao)
-        if self.tipo != "D" or not any(n in texto for n in NOMES_DA_PREVIDENCIA):
+        if self.tipo != "D":
             return False
-        # ... e NAO ser do INSS. A folha de Barra do Garcas tem as duas lado a
-        # lado -- "942 PREVIDENCIA - FUNDO" (regime proprio) e "919
-        # PREVIDENCIA - INSS" (regime geral) --, e 1.765 dos 3.233 servidores
-        # sao do INSS. Sem esta linha eles entravam na arrecadacao do RPPS: o
-        # arquivo sairia cobrando do fundo proprio contribuicao de quem nao e
-        # dele, e nada na planilha denunciaria isso.
-        return "INSS" not in texto
+        if self.forcado is not None:
+            return self.forcado
+        texto = _caixa_alta_sem_acento(self.descricao)
+        return (bool(RE_NOME_DA_PREVIDENCIA.search(texto))
+                and not RE_NAO_E_DO_RPPS.search(texto))
 
 
 @dataclass
@@ -131,8 +159,7 @@ class Segurado:
     @property
     def e_decimo_terceiro(self) -> bool:
         """Este bloco e de 13o salario, mesmo que a folha toda nao seja."""
-        texto = _caixa_alta_sem_acento(self.tipo_folha)
-        return "13" in texto and "SALARIO" in texto
+        return _e_so_decimo_terceiro(self.tipo_folha)
 
     # ------------------------------------------------------------------ #
     @property
@@ -227,6 +254,10 @@ class Folha:
     segurados: List[Segurado] = field(default_factory=list)
     paginas_sem_texto: List[int] = field(default_factory=list)
     avisos: List[str] = field(default_factory=list)
+    # O que so a LEITURA sabe dizer -- o formato configurado que nao serviu.
+    # Fica separado de `avisos` porque estes sao refeitos do zero a cada regra
+    # aplicada (`extracao.refazer_avisos`), e aquele se perderia.
+    avisos_de_leitura: List[str] = field(default_factory=list)
     # Um item por PDF lido. Uma folha de um arquivo so tem um -- o codigo que
     # percorre `origens` nao precisa saber se foram um ou tres.
     origens: List[Origem] = field(default_factory=list)
@@ -345,13 +376,27 @@ class Folha:
 
     @property
     def e_decimo_terceiro(self) -> bool:
-        texto = _caixa_alta_sem_acento(self.tipo)
-        return "13" in texto and "SALARIO" in texto
+        return _e_so_decimo_terceiro(self.tipo)
 
 
 # ---------------------------------------------------------------------- #
 # apoio
 # ---------------------------------------------------------------------- #
+def _e_so_decimo_terceiro(tipo: str) -> bool:
+    """O tipo diz que a folha (ou o bloco) e de 13o salario -- e SO dele.
+
+    "13o salario" sozinho, sim. Mas o Agili de Paranatinga escreve no
+    subtitulo TODOS os processamentos que o relatorio junta: "(Rescisao, 13o
+    salario, Mensal)". Ler isso como folha de 13o mandava os 628 servidores
+    para a competencia 13 -- a mensal inteira declarada no mes errado. Quando
+    o tipo tambem fala em mensal ou normal, a folha e a do mes.
+    """
+    texto = _caixa_alta_sem_acento(tipo)
+    if not ("13" in texto and "SALARIO" in texto):
+        return False
+    return not re.search(r"\bMENSAL\b|\bNORMAL\b", texto)
+
+
 def _caixa_alta_sem_acento(valor: str) -> str:
     decomposto = unicodedata.normalize("NFKD", str(valor or ""))
     return "".join(c for c in decomposto if not unicodedata.combining(c)).upper()
