@@ -15,7 +15,13 @@ Arrecadacao_*
 *.docx
 
 # O de/para das fontes pagadoras mora em %LOCALAPPDATA%, mas uma copia pode
-# acabar aqui durante um teste.
+# acabar aqui durante um teste. O nome do arquivo e `catalogo_fontes.json`
+# (ver `arrecadacao.fontes.ARQUIVO`); o outro nome fica porque versoes antigas
+# usavam ele, e tirar da lista so cria chance de vazar.
+#
+# Nao e catalogo neutro: ha fonte pagadora cujo NOME inclui o CPF e o nome de
+# uma pessoa, porque foi cadastrada assim no SISPREVWEB.
+catalogo_fontes.json
 fontes_pagadoras.json
 
 # ---------------------------------------------------------------------------

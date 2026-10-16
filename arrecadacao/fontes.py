@@ -85,13 +85,20 @@ COLUNA_NOME = "NOME"
 
 # "001 - 2002 -GABINETE EFETIVOS F 1.500" -> numero 1, resto o nome
 RE_NOME_CATALOGO = re.compile(r"^(\d+)\s*-\s*(.*)$")
+# "... MAC (RECURSO PRÓPRIO)" -> "... MAC": o complemento que so a folha tem.
+RE_SUFIXO_ENTRE_PARENTESES = re.compile(r"\s*\([^()]*\)\s*$")
 
 # Como a linha da fonte aparece na folha:
 # "2 - 1 - 2002 -GABINETE EFETIVOS F 1.500"
 #  ^   ^   ^-- o nome, que comeca pelo codigo do projeto/atividade
 #  |   +------ o numero da fonte: o que casa com o catalogo
 #  +---------- a ordem do grupo na folha, que nao serve para nada aqui
-RE_FONTE_NA_FOLHA = re.compile(r"^(\d+)\s+-\s+(\d+)\s+-\s+(\d{3,4}\s*-.*)$")
+# "<ordem na folha> - <numero da fonte> - <nome>". O nome NAO precisa comecar
+# com numero: na prefeitura ele comeca ("2 - 1 - 2002 -GABINETE EFETIVOS"),
+# mas na camara nao ("3 - 2-Servidores Efetivos"), e exigir os 3 digitos
+# deixava a folha da camara inteira sem fonte pagadora. Os espacos em volta
+# dos tracinhos tambem sao opcionais, pelo mesmo motivo.
+RE_FONTE_NA_FOLHA = re.compile(r"^(\d+)\s*-\s*(\d+)\s*-\s*(\S.*)$")
 
 
 # ---------------------------------------------------------------------- #
@@ -143,6 +150,11 @@ class FonteDaFolha:
     numero: int
     nome: str                     # "2002 -GABINETE EFETIVOS F 1.500"
     bruto: str = ""               # a linha inteira, para quem conferir no PDF
+    # Fonte que a folha NAO traz: o PDF inteiro e de uma fonte so e nao
+    # escreve qual. Acontece na folha da camara -- das tres que temos, duas
+    # vem sem grupo nenhum. Nao tendo numero para procurar no catalogo, a
+    # escolha e feita a mao, e por isso a marca: ver `Cadastro.casar`.
+    folha_inteira: bool = False
 
     @property
     def chave(self) -> str:
@@ -150,6 +162,8 @@ class FonteDaFolha:
         return "{}|{}".format(self.numero, normalizar(self.nome))
 
     def __str__(self) -> str:
+        if self.folha_inteira:
+            return self.nome
         return "{:03d} - {}".format(self.numero, self.nome)
 
 
@@ -157,11 +171,16 @@ class FonteDaFolha:
 # nome nao bate" e "casou inteiro" merecem confianca diferente.
 POR_NOME = "catálogo"
 POR_TRUNCADO = "catálogo (nome truncado na folha)"
+POR_SEM_SUFIXO = "catálogo (sem o complemento entre parênteses)"
 POR_NUMERO = "catálogo (só o número — o nome não confere)"
 POR_ESCOLHA = "escolhido por você"
+# O CSV que o municipio manda junto ja traz o codigo de cada servidor -- ver
+# `regras.fontes_do_complementar`. Vale onde nao ha catalogo nem escolha.
+POR_COMPLEMENTAR = "arquivo complementar do município"
 SEM_CATALOGO = "catálogo não importado"
 AMBIGUO = "mais de uma fonte com este número"
 AUSENTE = "número não existe no catálogo"
+SEM_GRUPO = "a folha não diz a fonte — escolha no catálogo"
 
 
 @dataclass
@@ -180,7 +199,8 @@ class Correspondencia:
     @property
     def confiavel(self) -> bool:
         """Casou inteiro, ou foi a pessoa que escolheu."""
-        return self.origem in (POR_NOME, POR_TRUNCADO, POR_ESCOLHA)
+        return self.origem in (POR_NOME, POR_TRUNCADO, POR_SEM_SUFIXO,
+                               POR_ESCOLHA)
 
 
 # ---------------------------------------------------------------------- #
@@ -297,6 +317,18 @@ class Cadastro:
     def casar(self, municipio: str, fonte: FonteDaFolha) -> Correspondencia:
         """O codigo desta fonte, e por que ele foi escolhido."""
         escolhido = self.escolha_de(municipio, fonte)
+        if fonte.folha_inteira:
+            # Sem numero no PDF nao ha o que procurar: os candidatos sao TODAS
+            # as fontes do municipio, e quem escolhe e a pessoa. A escolha fica
+            # gravada pela chave, entao a folha do mes seguinte ja vem
+            # resolvida.
+            todas = self._catalogo_ordenado(municipio, fonte.nome)
+            return Correspondencia(
+                fonte=fonte, codigo=escolhido,
+                origem=POR_ESCOLHA if escolhido else (
+                    SEM_CATALOGO if not todas else SEM_GRUPO),
+                candidatos=todas)
+
         candidatos = [f for f in self.fontes_de(municipio)
                       if f.numero == fonte.numero]
         if escolhido:
@@ -314,6 +346,19 @@ class Cadastro:
             return Correspondencia(fonte=fonte, codigo=exatos[0].codigo,
                                    origem=POR_NOME, candidatos=candidatos)
         if not exatos:
+            # A folha as vezes acrescenta ao nome um complemento que o catalogo
+            # nao tem: "MEDIA E ALTA COMPLEXIDADE- MAC (RECURSO PROPRIO)" na
+            # folha de Rosario, "MEDIA E ALTA COMPLEXIDADE- MAC" no SISPREVWEB.
+            # Tirar o parenteses do FIM e comparar de novo so vale quando sobra
+            # UM candidato -- continua sendo casamento por nome, que e o
+            # criterio confiavel, e nao palpite.
+            sem_sufixo = normalizar(RE_SUFIXO_ENTRE_PARENTESES.sub("", fonte.nome))
+            iguais = [f for f in candidatos if f.comparavel == sem_sufixo]
+            if sem_sufixo != alvo and len(iguais) == 1:
+                return Correspondencia(fonte=fonte, codigo=iguais[0].codigo,
+                                       origem=POR_SEM_SUFIXO,
+                                       candidatos=candidatos)
+
             # o PDF corta o nome na largura da coluna
             comecam = [f for f in candidatos if f.comparavel.startswith(alvo)]
             if len(comecam) == 1:
@@ -327,6 +372,34 @@ class Cadastro:
 
         return Correspondencia(fonte=fonte, origem=AMBIGUO,
                                candidatos=exatos or candidatos)
+
+    def _catalogo_ordenado(self, municipio: str,
+                           entidade: str) -> List[Fonte]:
+        """O catalogo do municipio, com o mais provavel primeiro.
+
+        Quem precisa desta lista esta resolvendo uma folha que nao diz a fonte,
+        e a folha da camara e o caso de longe mais comum. Entao, quando a
+        entidade do PDF fala em camara, as fontes do catalogo que tambem falam
+        sobem para o topo -- num catalogo de 60 linhas isso e a diferenca entre
+        achar e rolar. O resto da lista continua inteiro logo abaixo: a
+        sugestao e um atalho, e nao um filtro.
+        """
+        todas = list(self.fontes_de(municipio))
+        texto = normalizar(entidade)
+        # So palavras que de fato separam uma fonte das outras. Usar todas as
+        # palavras da entidade nao serviria: "CAMARA MUNICIPAL DE BARRA DO
+        # GARCAS" tem "municipal" e "barra", que casam com metade do catalogo
+        # de Barra do Garcas e sugerem tudo -- que e o mesmo que nao sugerir.
+        # Em CAIXA ALTA: e assim que `normalizar` devolve os dois lados.
+        pistas = [p for p in ("CAMARA", "LEGISLATIV", "VEREADOR")
+                  if p in texto]
+        if not pistas:
+            return todas
+        provaveis = [f for f in todas
+                     if any(p in f.comparavel for p in pistas)]
+        if not provaveis:
+            return todas
+        return provaveis + [f for f in todas if f not in provaveis]
 
     def casar_todas(self, municipio: str,
                     fontes: Iterable[FonteDaFolha]) -> Dict[str, Correspondencia]:

@@ -32,6 +32,48 @@ CATEGORIAS_ACEITAS = ("Efetivo", "Comissionado", "Estável",
 # abaixo do "FOLHA DE PAGAMENTO - 08/2026".
 MES_DECIMO_TERCEIRO = 13
 
+# Como reconhecer o desconto previdenciario do servidor pela descricao -- ver
+# `Verba.e_previdencia_do_segurado`.
+#
+# Comecou como uma LISTA de nomes, um por municipio, e a lista perdeu a
+# corrida: cada prefeitura batiza o proprio fundo. "PREVIDENCIA - FUNDO"
+# (Primavera, Barra do Garcas, Comodoro), "FUNDO PREVIDENCIA" (Rosario), e
+# depois "FUNPREV" (Sao Jose do Povo), "PREV COLNIZA", "PREVILA" (Vila Bela),
+# "PREVICON" (Confresa), "PREVISERV" (Chapada), "PARANATINGA PREV",
+# "PREVIPORA" (Tabapora) -- e na camara de Vila Bela "I.M.P.V.B. -
+# INST.PREV.PUB. MUN.". O nome que falta na lista nao da erro: o servidor sai
+# com base e contribuicao ZERO, em silencio, que e o jeito mais facil de
+# recolher a menos. Sete folhas de uma vez sairam assim.
+#
+# Por isso a regra e de PALAVRA: uma palavra que comeca por "PREVI", ou a
+# palavra "PREV" sozinha, ou um dos nomes que nao tem nem isso. Palavra
+# inteira, e nao pedaco: "CONSIGNADO IMPREV" (emprestimo, em Primavera) tem
+# "PREV" no meio e nao entra.
+RE_NOME_DA_PREVIDENCIA = re.compile(
+    r"\bPREVI\w*|\bPREV\b|\bFUNPREV\b|\bRPPS\b|\bI\.M\.P\.V\.B\.")
+# ... e o que tem cara de previdencia e NAO e a do regime proprio:
+# - INSS: o regime geral. Barra do Garcas tem "942 PREVIDENCIA - FUNDO" e
+#   "919 PREVIDENCIA - INSS" lado a lado, e 1.765 dos 3.233 servidores sao do
+#   INSS; a camara de Vila Bela escreve "I.N.S.S.".
+# - COMPLEMENTAR / PRIVADA: a previdencia complementar. Em Aripuana, "8900
+#   PREVIDENCIA COMPLEMENTAR" e 8,5% sobre o que passa do teto do RPPS -- a
+#   propria folha diz que a base do RPPS desses servidores e so o teto
+#   ("Base Patronal para RPPS 8.475,55").
+# - CONSIGNACAO / EMPRESTIMO: emprestimo tomado no fundo, como a "CONSIGNACAO
+#   COMODORO-PREVI 3/96". O nome do fundo esta la, a contribuicao nao.
+# - seguradora: "809 CAPEMISA-PREV/SEG" (Santo Antonio de Leverger) e plano
+#   de previdencia privada e seguro -- 616,09 em 7 servidores que iam somar
+#   na contribuicao do RPPS. E o "715 BB PREV CONTRIBUICAO DO" de Jauru, a
+#   previdencia complementar do Banco do Brasil a 8,5%: somada, ela ainda
+#   tirava o bloco do caso "uma previdencia so", e a base do servidor saia
+#   deduzida da referencia "1.00" da 712 -- 118.658,00 em vez de 8.475,55.
+# - rotulo de coluna lido como verba: "B. Prev Outros" (Sao Jose do Povo),
+#   "Base Previdencia Ferias" (Rosario).
+RE_NAO_E_DO_RPPS = re.compile(
+    r"\bINSS\b|\bI\.N\.S\.S\b|COMPLEMENTAR|PRIVADA|CONSIG|EMPREST"
+    r"|CAPEMISA|\bSEG(?:URO)?\b|\bBB\s*-?\s*PREV|BRASILPREV"
+    r"|^\s*(?:B\.|BASE\b)")
+
 
 @dataclass(frozen=True)
 class Competencia:
@@ -59,6 +101,11 @@ class Verba:
     base: Optional[float] = None
     integral: Optional[float] = None
     valor: Optional[float] = None
+    # A regra do MUNICIPIO decidiu -- ver `arrecadacao.regras`. None e "a
+    # regra geral decide", que e quase sempre. Existe porque a regra geral e
+    # por palavra, e sempre havera a verba de um municipio que ela erra: o
+    # fundo batizado sem "PREV" no nome, ou o seguro com "PREV" no nome.
+    forcado: Optional[bool] = None
 
     @property
     def e_previdencia_do_segurado(self) -> bool:
@@ -72,7 +119,13 @@ class Verba:
         (13o adiantamento) e 8847 (13o rescisao), e nenhuma consignacao se
         chama previdencia.
         """
-        return self.tipo == "D" and "PREVIDENCIA" in _caixa_alta_sem_acento(self.descricao)
+        if self.tipo != "D":
+            return False
+        if self.forcado is not None:
+            return self.forcado
+        texto = _caixa_alta_sem_acento(self.descricao)
+        return (bool(RE_NOME_DA_PREVIDENCIA.search(texto))
+                and not RE_NAO_E_DO_RPPS.search(texto))
 
 
 @dataclass
@@ -95,6 +148,18 @@ class Segurado:
     fonte: Optional[FonteDaFolha] = None
     verbas: List[Verba] = field(default_factory=list)
     pagina: int = 0
+    # De QUAL folha veio este bloco, quando um PDF traz mais de uma. O arquivo
+    # de Barra do Garcas tem cinco empilhadas -- NORMAL em 565 paginas, 13o
+    # SALARIO em 20, RESCISAO em 19, RESCISAO COMPLEMENTAR em 3 e COMPLEMENTAR
+    # em 2 --, e sem isto os 100 servidores que recebem 13o sairiam com duas
+    # linhas na competencia 07: a mensal e a do 13o, que o SISPREVWEB recusa
+    # como competencia repetida. Vazio = o tipo da folha inteira.
+    tipo_folha: str = ""
+
+    @property
+    def e_decimo_terceiro(self) -> bool:
+        """Este bloco e de 13o salario, mesmo que a folha toda nao seja."""
+        return _e_so_decimo_terceiro(self.tipo_folha)
 
     # ------------------------------------------------------------------ #
     @property
@@ -148,16 +213,54 @@ class Segurado:
 
 
 @dataclass
+class Origem:
+    """Um PDF que entrou nesta folha.
+
+    Existe porque a arrecadacao de um mes raramente vem num arquivo so: a
+    prefeitura exporta a folha dela e a camara a sua, e o SISPREVWEB recebe um
+    arquivo por municipio. Juntar os dois no programa evita a conferencia
+    manual de dois arquivos separados -- mas so vale se, depois de juntos, ainda
+    der para dizer de qual PDF saiu cada coisa. Daqui saem o "2 documentos" da
+    tela e o aviso que nomeia o arquivo certo quando um deles vem digitalizado.
+    """
+
+    arquivo: str = ""
+    entidade: str = ""            # "DE ARIPUANÃ-MT"
+    tipo: str = ""                # "Mensal", "Rescisão", "13º salário"
+    formato: str = ""             # qual leitor deu conta: "Agili", "Fiorilli"
+    competencia: Optional[Competencia] = None
+    paginas_sem_texto: List[int] = field(default_factory=list)
+    segurados: int = 0
+
+    @property
+    def nome(self) -> str:
+        from pathlib import Path
+        return Path(self.arquivo).name if self.arquivo else ""
+
+
+@dataclass
 class Folha:
-    """Uma folha de pagamento lida por inteiro."""
+    """Uma folha de pagamento lida por inteiro -- de um PDF ou de varios."""
 
     arquivo: str = ""
     competencia: Optional[Competencia] = None
     tipo: str = ""                # "Mensal", "Rescisão", "13º salário"
     entidade: str = ""            # "DE ARIPUANÃ-MT"
+    # Qual leitor de `arrecadacao.formatos` deu conta deste PDF -- "Agili",
+    # "ARFolha". Vai na aba Resumo do xlsx: meses depois, saber de qual
+    # sistema de folha o arquivo veio e o que explica por que uma coluna foi
+    # lida de um jeito e nao de outro.
+    formato: str = ""
     segurados: List[Segurado] = field(default_factory=list)
     paginas_sem_texto: List[int] = field(default_factory=list)
     avisos: List[str] = field(default_factory=list)
+    # O que so a LEITURA sabe dizer -- o formato configurado que nao serviu.
+    # Fica separado de `avisos` porque estes sao refeitos do zero a cada regra
+    # aplicada (`extracao.refazer_avisos`), e aquele se perderia.
+    avisos_de_leitura: List[str] = field(default_factory=list)
+    # Um item por PDF lido. Uma folha de um arquivo so tem um -- o codigo que
+    # percorre `origens` nao precisa saber se foram um ou tres.
+    origens: List[Origem] = field(default_factory=list)
 
     # ------------------------------------------------------------------ #
     @property
@@ -215,6 +318,32 @@ class Folha:
         """Quem a folha nao colocou em grupo nenhum de fonte pagadora."""
         return [s for s in self.segurados if s.fonte is None]
 
+    def segurados_da_fonte(self, chave: str) -> List["Segurado"]:
+        """Quem esta nesta fonte, na ordem da folha.
+
+        E' o que responde a pergunta de quem precisa achar uma fonte que o
+        catalogo nao tem: o nome do grupo -- "600 - 2067 - SAMU EFETIVOS
+        1.600.000.603" -- as vezes nao diz nada a quem procura no SISPREVWEB,
+        mas o servidor que esta nela diz, e a unidade dele diz mais ainda.
+        """
+        return [s for s in self.segurados
+                if s.fonte is not None and s.fonte.chave == chave]
+
+    def unidades_da_fonte(self, chave: str) -> List[str]:
+        """As unidades distintas de quem esta nesta fonte, na ordem da folha.
+
+        Costuma ser UMA -- a fonte vive dentro da estrutura --, e e por ela que
+        a fonte se reconhece: "1.09.016 - FUNDO MUNICIPAL DE SAUDE" localiza o
+        grupo no SISPREVWEB mais depressa que o nome do proprio grupo.
+        """
+        vistas: List[str] = []
+        for segurado in self.segurados_da_fonte(chave):
+            rotulo = " - ".join(p for p in (segurado.estrutura,
+                                            segurado.unidade) if p)
+            if rotulo and rotulo not in vistas:
+                vistas.append(rotulo)
+        return vistas
+
     @property
     def estruturas(self) -> List[Tuple[str, str]]:
         """(estrutura, unidade) distintas, na ordem em que aparecem.
@@ -247,13 +376,27 @@ class Folha:
 
     @property
     def e_decimo_terceiro(self) -> bool:
-        texto = _caixa_alta_sem_acento(self.tipo)
-        return "13" in texto and "SALARIO" in texto
+        return _e_so_decimo_terceiro(self.tipo)
 
 
 # ---------------------------------------------------------------------- #
 # apoio
 # ---------------------------------------------------------------------- #
+def _e_so_decimo_terceiro(tipo: str) -> bool:
+    """O tipo diz que a folha (ou o bloco) e de 13o salario -- e SO dele.
+
+    "13o salario" sozinho, sim. Mas o Agili de Paranatinga escreve no
+    subtitulo TODOS os processamentos que o relatorio junta: "(Rescisao, 13o
+    salario, Mensal)". Ler isso como folha de 13o mandava os 628 servidores
+    para a competencia 13 -- a mensal inteira declarada no mes errado. Quando
+    o tipo tambem fala em mensal ou normal, a folha e a do mes.
+    """
+    texto = _caixa_alta_sem_acento(tipo)
+    if not ("13" in texto and "SALARIO" in texto):
+        return False
+    return not re.search(r"\bMENSAL\b|\bNORMAL\b", texto)
+
+
 def _caixa_alta_sem_acento(valor: str) -> str:
     decomposto = unicodedata.normalize("NFKD", str(valor or ""))
     return "".join(c for c in decomposto if not unicodedata.combining(c)).upper()

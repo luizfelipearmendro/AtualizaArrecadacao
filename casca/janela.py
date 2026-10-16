@@ -291,6 +291,10 @@ class Janela(tk.Frame):
         # cadastrasse um codigo sem sair da tela.
         from arrecadacao.fontes import Cadastro
         self.cadastro = Cadastro.carregar(self.pasta_dados)
+        # As regras de cada municipio -- ver `arrecadacao.regras`. Tambem um
+        # objeto so: a tela Municipios edita, a da folha aplica.
+        from arrecadacao.regras import Configuracao
+        self.config = Configuracao.carregar(self.pasta_dados)
 
         aplicar_estilo()
         self.telas: Dict[str, object] = {}
@@ -311,6 +315,12 @@ class Janela(tk.Frame):
         self.raiz.after(120, self._drenar)
         # add="+": o ComboBusca tambem ouve o Configure do toplevel
         self.raiz.bind("<Configure>", self._ao_redimensionar, add="+")
+        # A roda do mouse e entregue pela JANELA, e nao por cada widget: um
+        # `bind` por widget nao alcanca os filhos, e a pagina so rolaria com o
+        # ponteiro em cima do fundo. Registrada UMA vez -- em `ir_para` ela se
+        # acumularia a cada navegacao, e a pagina passaria a rolar varias
+        # linhas por clique da roda. A tela visivel decide o que fazer.
+        self.raiz.bind_all("<MouseWheel>", self._rolar_tela, add="+")
         self.raiz.protocol("WM_DELETE_WINDOW", self._ao_fechar)
 
     # ------------------------------------------------------------------ #
@@ -384,9 +394,11 @@ class Janela(tk.Frame):
 
         self._item("inicio", "Início", "", glifo="inicio")
         self._secao("FLUXO")
-        self._item("folha", "Folha de pagamento", "nenhuma folha lida", "1",
+        self._item("folha", "Arrecadação", "nenhuma folha lida", "1",
                    glifo="diario")
         self._secao("CADASTRO")
+        self._item("municipios", "Municípios", "regras de cada um",
+                   glifo="conferir")
         self._item("fontes", "Fontes pagadoras", "catálogo do SISPREVWEB",
                    glifo="engrenagem")
         self._item("exportacoes", "Exportações", "o que já foi gerado",
@@ -410,11 +422,34 @@ class Janela(tk.Frame):
         self.marca_texto = tk.Frame(self.marca, bg=COR_BARRA)
         self.marca_texto.pack(side="left", padx=(10, 0))
         tk.Label(self.marca_texto, text=APP_NOME, bg=COR_BARRA,
-                 fg=COR_BARRA_FORTE, font=fonte(T_MARCA, True, titulo=True),
+                 fg=COR_BARRA_FORTE,
+                 font=fonte(self._tamanho_da_marca(), True, titulo=True),
                  anchor="w").pack(fill="x")
         tk.Label(self.marca_texto, text=APP_SUB, bg=COR_BARRA,
                  fg=COR_BARRA_FRACO, font=fonte(T_MINI), anchor="w").pack(
             fill="x")
+
+    def _tamanho_da_marca(self) -> int:
+        """O maior tamanho em que o nome do aplicativo ainda cabe na barra.
+
+        Medido, e nao fixado: no tamanho 13 "Atualiza Arrecadação" pede 169
+        pixels para os 164 que sobram ao lado da logo, e a barra mostrava
+        "Atualiza Arrecadaçã". Escolher por medida faz o nome caber hoje e
+        continuar cabendo se um dia ele mudar ou a fonte do sistema for outra.
+        """
+        import tkinter.font as tkfont
+        # 46 = o que os paddings da barra, da marca e do bloco de texto comem,
+        # medido na tela (o bloco fica com 160 dos 250 da barra), mais uma
+        # folga de 4 para o nome nao encostar na borda.
+        sobra = LARGURA_BARRA - LADO_LOGO - 46
+        tamanho = T_MARCA
+        while tamanho > 9:
+            largura = tkfont.Font(
+                font=fonte(tamanho, True, titulo=True)).measure(APP_NOME)
+            if largura <= sobra:
+                break
+            tamanho -= 1
+        return tamanho
 
     def _carregar_logo(self, lado: int = LADO_LOGO) -> Optional[tk.PhotoImage]:
         """A logo do tamanho pedido, tirada de dentro do proprio `.ico`."""
@@ -612,8 +647,10 @@ class Janela(tk.Frame):
         from .tela_folha import TelaFolha
         from .tela_fontes import TelaFontes
         from .tela_inicio import TelaInicio
+        from .tela_municipios import TelaMunicipios
 
         for chave, classe in (("inicio", TelaInicio), ("folha", TelaFolha),
+                              ("municipios", TelaMunicipios),
                               ("fontes", TelaFontes),
                               ("exportacoes", TelaExportacoes)):
             self.telas[chave] = classe(self.conteudo, self)
@@ -655,6 +692,15 @@ class Janela(tk.Frame):
         pasta = Path(self.prefs.pasta_relatorios)
         partes = [p for p in (pasta.parent.name, pasta.name) if p]
         self.var_destino.set("\\".join(partes) or str(pasta))
+
+    def _rolar_tela(self, evento) -> None:
+        """Roda do mouse: quem trata e a tela que esta aparecendo."""
+        tela = self.telas.get(self.atual)
+        if tela is not None:
+            try:
+                tela.rolar(evento)
+            except tk.TclError:
+                pass
 
     def status(self, texto: str) -> None:
         self.var_rodape.set(texto)
@@ -791,8 +837,36 @@ class Janela(tk.Frame):
             descricao = "catálogo do SISPREVWEB"
         self.itens["fontes"].definir_estado(True, descricao)
 
+        configurados = sum(1 for m in self.config.lista_de_municipios()
+                           if self.config.configurado(m))
+        self.itens["municipios"].definir_estado(
+            True, "{} com regra própria".format(configurados) if configurados
+            else "regras de cada um")
+
+    # ------------------------------------------------------------------ #
+    # regras do municipio
+    # ------------------------------------------------------------------ #
+    def regras_atuais(self):
+        """As regras do municipio escolhido -- a geral, se nenhum foi."""
+        return self.config.regras_de(self.estado.municipio)
+
+    def aplicar_regras(self) -> None:
+        """Refaz a folha mostrada a partir da lida, com as regras de agora.
+
+        Chamado depois da leitura, ao trocar de municipio e ao voltar da tela
+        Municipios: em todos os tres casos o PDF ja esta lido, e o que mudou e
+        so o que fazer com ele.
+        """
+        if self.estado.folha_lida is None:
+            return
+        from arrecadacao.regras import aplicar
+        self.estado.folha = aplicar(self.estado.folha_lida,
+                                    self.regras_atuais(),
+                                    self.estado.complementar)
+        self.casar_fontes()
+
     def rotulos_de_municipio(self, com_contagem: bool = False) -> tuple:
-        """Os 29 municipios com uma marca em quem ja tem catalogo importado.
+        """Os municipios atendidos, com uma marca em quem ja tem catalogo.
 
         Devolve (rotulos, {rotulo: municipio}). A marca existe porque a lista
         e sempre a mesma, com e sem cadastro: sem ela, escolher um municipio
@@ -803,10 +877,8 @@ class Janela(tk.Frame):
         Mora na janela porque as duas telas mostram a MESMA lista, e a fonte da
         verdade e o cadastro, que e da janela.
         """
-        from arrecadacao.municipios import MUNICIPIOS
-
         rotulos, de_rotulo = [], {}
-        for municipio in MUNICIPIOS:
+        for municipio in self.config.lista_de_municipios():
             quantas = len(self.cadastro.fontes_de(municipio))
             if not com_contagem:
                 rotulo = "{}  {}".format("✓" if quantas else "·", municipio)
@@ -832,6 +904,16 @@ class Janela(tk.Frame):
             return self.estado.correspondencias
         self.estado.correspondencias = self.cadastro.casar_todas(
             self.estado.municipio, self.estado.folha.fontes)
+        # O que o catalogo e as escolhas nao resolveram, o CSV complementar do
+        # municipio pode resolver -- ele traz o codigo de cada servidor.
+        from arrecadacao.fontes import POR_COMPLEMENTAR
+        from arrecadacao.regras import fontes_do_complementar
+        do_csv = fontes_do_complementar(self.estado.folha,
+                                        self.estado.complementar)
+        for chave, correspondencia in self.estado.correspondencias.items():
+            if not correspondencia.resolvida and chave in do_csv:
+                correspondencia.codigo = do_csv[chave]
+                correspondencia.origem = POR_COMPLEMENTAR
         return self.estado.correspondencias
 
     def fontes_pendentes(self) -> List:

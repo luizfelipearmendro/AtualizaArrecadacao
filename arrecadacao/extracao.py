@@ -1,107 +1,204 @@
 # -*- coding: utf-8 -*-
-r"""Do PDF remontado para os segurados: onde comeca e onde termina cada bloco.
+r"""Do PDF para os segurados: escolhe o leitor do formato e confere o resultado.
 
-A folha nao marca o fim de um funcionario, so o comeco do proximo. O bloco e
-delimitado assim:
+Este modulo nao sabe ler folha nenhuma. Ele abre o PDF, emenda as paginas numa
+lista unica de linhas, pergunta a `arrecadacao.formatos` qual leitor reconhece
+aquele arquivo e, no fim, levanta os avisos que a tela precisa dar antes de
+alguem exportar. Quem sabe ler cada folha sao os modulos de `formatos/`.
 
-    Funcionario(a)  Matricula  Situacao  Estrutura ADM ...   <- ABRE o bloco
-    FULANA DE TAL DA SILVA SANTOS  9999  Ativo  1.02.001
-    Cargo - Estrutura do Cargo
-    1177 - AGENTE ADMINISTRATIVO-VI-A - A.01
-    Regime Previdenciario   Multiplos vinculos  Vinculo  Forma de ingresso
-    RPPS - Regime proprio de previdencia social   Nao   30   Nomeacao ...
-    Calculo mensal   Tipo   Referencia   Base   Integral   Valor
-    1 - SALARIO MENSAL      (P) - Dia   30,00   4.810,11  4.810,11  4.810,11
-    8850 - PREVIDENCIA MUNICIPAL  (D) - Tabela  14,00  4.810,11  673,42  673,42
-    Total de proventos: ...  Total de descontos: ...  Total liquido: ...
-    Funcionario(a)  Matricula  ...                          <- FECHA o anterior
-
-Ou seja: cada cabecalho fecha o bloco anterior e abre o seguinte, e o ultimo de
-cada pagina e fechado pelo rodape. Percorrer as paginas em sequencia -- e nao
-pagina a pagina isolada -- e o que faz um bloco partido pela quebra de pagina
-continuar inteiro; as 225 paginas da folha mensal viram uma lista unica de
-linhas por isso.
-
-Uma escolha que parece detalhe e nao e: as colunas sao lidas do CABECALHO de
-cada bloco, e nao fixadas em constantes. O mesmo municipio emite folha mensal,
-de rescisao e de 13o pelo mesmo sistema, e elas nao tem as mesmas colunas nas
-mesmas posicoes. Reler o cabecalho custa quase nada e e o que permite abrir uma
-folha de outro layout sem reescrever este arquivo.
+A separacao existe porque sao 29 municipios e cada prefeitura contrata o seu
+sistema de folha. O que vale para todos -- emendar as paginas, conferir o que
+saiu, avisar -- fica aqui; o que e de um gerador so fica la.
 """
 
 from __future__ import annotations
 
-import re
+from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
-from .folha import Competencia, Folha, Segurado, Verba, numero
-from .fontes import RE_FONTE_NA_FOLHA, FonteDaFolha
-from .leitor_pdf import (Coluna, Linha, Pagina, abrir, distribuir,
-                         localizar_colunas, paginas_sem_texto)
-
-# --- cabecalho do bloco de funcionario --------------------------------- #
-# Os rotulos NA ORDEM das colunas. A primeira palavra basta para achar cada um.
-ROTULOS_SEGURADO = (
-    ("nome", "Funcionário(a)"),
-    ("matricula", "Matrícula"),
-    ("situacao", "Situação"),
-    ("estrutura", "Estrutura"),
-    ("admissao", "Data"),
-    ("cpf", "C.P.F."),
-    ("pis", "PIS/PASEP"),
-)
-
-# --- cabecalho da tabela de verbas ------------------------------------- #
-ROTULOS_VERBA = (
-    ("descricao", "Cálculo"),
-    ("tipo", "Tipo"),
-    ("referencia", "Referência"),
-    ("base", "Base"),
-    ("integral", "Integral"),
-    ("valor", "Valor"),
-)
-# Dinheiro alinha a direita: ver `leitor_pdf.Coluna`.
-VERBAS_PELA_DIREITA = ("referencia", "base", "integral", "valor")
-
-RE_CABECALHO_SEGURADO = re.compile(r"^Funcion.rio\(a\)\s+Matr.cula", re.IGNORECASE)
-# "Calculo mensal Tipo ...", mas tambem "Calculo 13o salario Tipo ..." e
-# "Calculo da rescisao Tipo ...": o que vem entre "Calculo" e "Tipo" e o nome
-# da folha, e varia em numero de palavras. Exigir uma palavra so fazia a folha
-# de 13o passar SEM tabela de verbas -- o segurado saia com contribuicao zero,
-# e zero e um numero que ninguem estranha numa planilha de 774 linhas.
-RE_CABECALHO_VERBA = re.compile(
-    r"^C.lculo\b.*\bTipo\b.*\bValor\b", re.IGNORECASE)
-RE_COMPETENCIA = re.compile(r"FOLHA DE PAGAMENTO\s*[-–]\s*(\d{1,2})\s*/\s*(\d{4})")
-RE_SUBTITULO = re.compile(r"^\((.+)\)$")
-RE_REGIME = re.compile(r"^(RPPS|RGPS)\b")
-RE_ENTIDADE = re.compile(r"^1\s+-\s+(.+)$")
-# "1.09.016 - FUNDO MUNICIPAL DE SAUDE": o nome que a estrutura ADM carrega.
-RE_UNIDADE = re.compile(r"^(\d+\.\d+\.\d+)\s+-\s+(.+)$")
-# A MESMA linha de fonte aparece duas vezes: como cabecalho do grupo, e como
-# rotulo do subtotal no fim dele. O subtotal vem emendado com o texto da
-# tabelinha de totais ("... funcionarios", "... Proventos Descontos Liquido"),
-# porque na pagina eles estao lado a lado e o leitor junta a linha inteira.
-# Sem separar os dois, o subtotal do grupo que acabou viraria a fonte do
-# proximo servidor -- e o servidor sairia creditado na fonte anterior.
-RE_RODAPE_DO_GRUPO = re.compile(r"(funcion.rios|Proventos\s+Descontos)",
-                                re.IGNORECASE)
-# "8850 - PREVIDENCIA MUNICIPAL   (D) - Tabela   14,00 ..."
-RE_VERBA = re.compile(r"^(\d+)\s+-\s+(.*?)\s+\((P|D|N|B|I)\)\s+-\s+\S+")
-RE_CARGO = re.compile(r"^(\d+)\s+-\s+(.+)$")
+from . import formatos
+from .folha import Folha, Origem, Segurado
+from .fontes import FonteDaFolha
+from .leitor_pdf import Pagina, abrir, paginas_sem_texto
 
 
-def ler(caminho: str, progresso=None) -> Folha:
-    """Le a folha inteira. `progresso` recebe (feitos, total, texto)."""
+def ler(caminho: str, progresso=None, formato: str = "") -> Folha:
+    """Le a folha inteira. `progresso` recebe (feitos, total, texto).
+
+    `formato` e o NOME de um leitor, quando a regra do municipio fixa um. Se
+    ele nao reconhecer nada no PDF, vale o reconhecimento automatico -- com
+    aviso: o PDF de um gerador pontua zero no outro, e insistir no formato
+    configurado daria uma folha vazia em vez de uma lida.
+    """
     paginas = abrir(caminho, progresso)
     folha = Folha(arquivo=caminho, paginas_sem_texto=paginas_sem_texto(paginas))
 
     if progresso:
         progresso(0, 0, "Localizando os segurados...")
     linhas = _emendar_paginas(paginas)
-    _ler_cabecalho_da_folha(linhas, folha)
-    folha.segurados = _ler_segurados(linhas, folha)
+
+    leitor = formatos.por_nome(formato) if formato else None
+    if leitor is not None and not leitor.pontuar(linhas):
+        leitor = None
+        folha.avisos_de_leitura.append(
+            "O formato configurado para o município ({}) não reconhece {}; o "
+            "programa escolheu o formato sozinho.".format(
+                formato, Path(caminho).name))
+    if leitor is None:
+        leitor = formatos.reconhecer(linhas)
+    if leitor is not None:
+        folha.formato = leitor.NOME
+        folha.segurados = leitor.ler(linhas, folha)
+        _fonte_da_folha_inteira(folha)
+
+    folha.origens = [Origem(arquivo=caminho, entidade=folha.entidade,
+                            tipo=folha.tipo, formato=folha.formato,
+                            competencia=folha.competencia,
+                            paginas_sem_texto=list(folha.paginas_sem_texto),
+                            segurados=len(folha.segurados))]
     _avisar(folha)
     return folha
+
+
+def ler_varios(caminhos: Sequence[str], progresso=None,
+               formato: str = "") -> Folha:
+    """Le varios PDFs e devolve UMA folha com todos os segurados.
+
+    A arrecadacao de um mes raramente cabe num arquivo so: a prefeitura exporta
+    a folha dela e a camara a sua, e o SISPREVWEB recebe um arquivo por
+    municipio. Lidos separados, os dois viram duas exportacoes para conferir e
+    importar em duplicata; lidos juntos, viram o arquivo que o sistema espera.
+
+    Cada PDF e lido pelo seu proprio leitor -- os formatos podem ser
+    diferentes, e em Barra do Garcas e Primavera eles sao o mesmo mas em
+    municipios futuros nao serao. Os avisos sao refeitos sobre o conjunto, e
+    nao somados: "3 matriculas repetidas" vale para a folha inteira, e e
+    justamente entre dois PDFs que a matricula repetida passa despercebida.
+    """
+    caminhos = [c for c in caminhos if c]
+    if not caminhos:
+        return Folha()
+    if len(caminhos) == 1:
+        return ler(caminhos[0], progresso, formato)
+
+    lidas = []
+    for indice, caminho in enumerate(caminhos, 1):
+        if progresso:
+            progresso(indice - 1, len(caminhos),
+                      "Lendo {} ({} de {})...".format(
+                          Path(caminho).name, indice, len(caminhos)))
+        lidas.append(ler(caminho, progresso, formato))
+    return _juntar(lidas)
+
+
+# ---------------------------------------------------------------------- #
+def _juntar(lidas: Sequence[Folha]) -> Folha:
+    """Uma folha so a partir de varias, mantendo de onde veio cada coisa."""
+    junta = Folha(arquivo=lidas[0].arquivo)
+    for parcial in lidas:
+        junta.segurados.extend(parcial.segurados)
+        junta.origens.extend(parcial.origens)
+        junta.paginas_sem_texto.extend(parcial.paginas_sem_texto)
+        junta.avisos_de_leitura.extend(parcial.avisos_de_leitura)
+
+    # A competencia e o tipo saem do primeiro PDF que os trouxe; divergencia
+    # entre arquivos vira aviso, nao escolha silenciosa -- juntar a folha de
+    # julho com a de agosto e erro de quem anexou, e o programa tem de dizer.
+    junta.competencia = next((o.competencia for o in junta.origens
+                              if o.competencia is not None), None)
+    junta.tipo = next((o.tipo for o in junta.origens if o.tipo), "")
+    junta.entidade = " + ".join(
+        _distintos(o.entidade for o in junta.origens if o.entidade))
+    junta.formato = " + ".join(
+        _distintos(o.formato for o in junta.origens if o.formato))
+
+    refazer_avisos(junta)
+    return junta
+
+
+def refazer_avisos(folha: Folha) -> None:
+    """Os avisos de novo, do zero, sobre os segurados de agora.
+
+    Chamado depois de juntar PDFs e depois de aplicar as regras do municipio
+    (`regras.aplicar`): separar o 13o da rescisao muda quem tem 13o dentro do
+    bloco do mes, e o aviso antigo ficaria na tela dizendo o contrario do que
+    a tabela mostra.
+    """
+    folha.avisos = []
+    _avisar(folha)
+    if len(folha.origens) > 1:
+        _avisar_divergencias(folha)
+
+
+def _avisar_divergencias(folha: Folha) -> None:
+    """Competencias ou tipos diferentes entre os PDFs anexados."""
+    competencias = _distintos(str(o.competencia) for o in folha.origens
+                              if o.competencia is not None)
+    if len(competencias) > 1:
+        folha.avisos.append(
+            "Os documentos anexados são de competências diferentes ({}). "
+            "Exportando juntos, todas as linhas sairão em {} — separe os "
+            "arquivos se não for isso que você quer.".format(
+                ", ".join(competencias), folha.competencia))
+
+    # Comparar o TEXTO do tipo acusaria diferenca onde nao ha: o mesmo gerador
+    # escreve "NORMAL" num PDF e "FOLHA MENSAL" no outro para a mesma coisa. O
+    # que muda a competencia de saida e so o 13o salario, e e so disso que vale
+    # avisar.
+    decimos = [o.nome for o in folha.origens if _e_decimo(o.tipo)]
+    mensais = [o.nome for o in folha.origens if not _e_decimo(o.tipo)]
+    if decimos and mensais:
+        folha.avisos.append(
+            "Há folha de 13º salário ({}) junto com folha mensal ({}). As "
+            "linhas do 13º sairão na competência 13 e as demais no mês da "
+            "folha — confira se é isso que você quer num arquivo só.".format(
+                ", ".join(decimos), ", ".join(mensais)))
+
+
+def _e_verba_do_decimo(descricao: str) -> bool:
+    """"PARANATINGA PREV 13 SALARIO", "PREVIDENCIA S/ 13O SALARIO RESCISAO"."""
+    from .folha import Segurado
+    return Segurado(tipo_folha=descricao or "").e_decimo_terceiro
+
+
+def _e_decimo(tipo: str) -> bool:
+    from .folha import Segurado
+    return Segurado(tipo_folha=tipo or "").e_decimo_terceiro
+
+
+def _distintos(itens) -> List[str]:
+    vistos: List[str] = []
+    for item in itens:
+        if item and item not in vistos:
+            vistos.append(item)
+    return vistos
+
+
+# ---------------------------------------------------------------------- #
+def _fonte_da_folha_inteira(folha: Folha) -> None:
+    """Quando NENHUM segurado tem fonte, a folha inteira e de uma fonte so.
+
+    E' o caso da camara: das tres folhas de camara que temos, duas nao trazem
+    grupo nenhum -- 94 servidores em Barra do Garcas e 25 em Primavera. Sem
+    isto, eles chegariam na tela como "94 segurados sem fonte pagadora", um
+    aviso que nao da o que fazer, e sairiam no arquivo sem codigo.
+
+    Com a fonte sintetica eles viram UMA pendencia, com o nome da entidade, que
+    se resolve escolhendo no catalogo como qualquer outra -- e a escolha fica
+    gravada para o mes seguinte. A conversao so acontece quando a folha nao
+    agrupa NINGUEM: se ela agrupa uns e outros nao, isso e falha de leitura do
+    cabecalho do grupo, e inventar uma fonte esconderia o problema.
+    """
+    if not folha.segurados or any(s.fonte is not None for s in folha.segurados):
+        return
+    nome = folha.entidade.strip() or Path(folha.arquivo).stem
+    fonte = FonteDaFolha(numero=0, nome=nome, folha_inteira=True,
+                         bruto="documento inteiro: {}".format(
+                             Path(folha.arquivo).name))
+    for segurado in folha.segurados:
+        segurado.fonte = fonte
+        if not segurado.unidade:
+            segurado.unidade = nome
 
 
 # ---------------------------------------------------------------------- #
@@ -116,173 +213,53 @@ def _emendar_paginas(paginas: Sequence[Pagina]) -> List[tuple]:
     return [(linha, pagina.numero) for pagina in paginas for linha in pagina.linhas]
 
 
-def _ler_cabecalho_da_folha(linhas: Sequence[tuple], folha: Folha) -> None:
-    """Competencia, tipo e entidade -- estao nas primeiras linhas da pagina 1."""
-    for linha, _pagina in linhas[:40]:
-        texto = linha.texto.strip()
-
-        if folha.competencia is None:
-            achado = RE_COMPETENCIA.search(texto)
-            if achado:
-                folha.competencia = Competencia(ano=int(achado.group(2)),
-                                                mes=int(achado.group(1)))
-                continue
-
-        # O subtitulo so vale DEPOIS da competencia: "(Mensal)" vem logo abaixo
-        # do "FOLHA DE PAGAMENTO - 08/2026", e antes dele ha outros parenteses
-        # no cabecalho do gerador.
-        if folha.competencia is not None and not folha.tipo:
-            achado = RE_SUBTITULO.match(texto)
-            if achado and len(texto) < 40:
-                folha.tipo = achado.group(1).strip()
-                continue
-
-        if not folha.entidade:
-            achado = RE_ENTIDADE.match(texto)
-            if achado:
-                folha.entidade = achado.group(1).strip()
-
-
-def _ler_segurados(linhas: Sequence[tuple], folha: Folha) -> List[Segurado]:
-    """Percorre as linhas abrindo um segurado a cada cabecalho de bloco."""
-    segurados: List[Segurado] = []
-    atual: Optional[Segurado] = None
-    colunas_verba: Dict[str, Coluna] = {}
-    unidade_corrente = ""
-    fonte_corrente: Optional[FonteDaFolha] = None
-
-    for indice, (linha, pagina) in enumerate(linhas):
-        texto = linha.texto.strip()
-
-        # A fonte pagadora vem logo abaixo da estrutura e vale para todos os
-        # servidores ate a proxima -- e a chave do de/para com o SISPREVWEB.
-        # Testada ANTES da unidade porque "2 - 1 - 2002 -GABINETE..." tambem
-        # casa com o padrao de nivel de estrutura.
-        achado = RE_FONTE_NA_FOLHA.match(texto)
-        if achado and not RE_RODAPE_DO_GRUPO.search(texto):
-            fonte_corrente = FonteDaFolha(numero=int(achado.group(2)),
-                                          nome=achado.group(3).strip(),
-                                          bruto=texto)
-            continue
-
-        # O titulo da unidade vem ANTES dos funcionarios dela e vale para todos
-        # ate o proximo: e so ele que diz que "1.09.016" se chama "FUNDO
-        # MUNICIPAL DE SAUDE", nome que a tela das fontes pagadoras mostra para
-        # o usuario nao ter de decorar codigo.
-        achado = RE_UNIDADE.match(texto)
-        if achado:
-            unidade_corrente = achado.group(2).strip()
-            continue
-
-        if RE_CABECALHO_SEGURADO.match(texto):
-            proxima = linhas[indice + 1][0] if indice + 1 < len(linhas) else None
-            atual = _abrir_segurado(linha, proxima, pagina, unidade_corrente,
-                                    fonte_corrente)
-            if atual is not None:
-                segurados.append(atual)
-            colunas_verba = {}
-            continue
-
-        if atual is None:
-            continue
-
-        if RE_CABECALHO_VERBA.match(texto):
-            colunas_verba = localizar_colunas(linha, ROTULOS_VERBA,
-                                              pela_direita=VERBAS_PELA_DIREITA)
-            continue
-
-        if not atual.regime and RE_REGIME.match(texto):
-            _ler_regime(linha, atual)
-            continue
-
-        if not atual.cargo and RE_CARGO.match(texto) and not RE_VERBA.match(texto):
-            atual.cargo = texto
-            continue
-
-        if colunas_verba and RE_VERBA.match(texto):
-            verba = _ler_verba(linha, colunas_verba)
-            if verba is not None:
-                atual.verbas.append(verba)
-
-    return segurados
-
-
-def _abrir_segurado(cabecalho: Linha, valores: Optional[Linha], pagina: int,
-                    unidade: str,
-                    fonte: Optional[FonteDaFolha] = None) -> Optional[Segurado]:
-    """Le a linha de valores logo abaixo do cabecalho do bloco."""
-    if valores is None:
-        return None
-    colunas = localizar_colunas(cabecalho, ROTULOS_SEGURADO)
-    if "nome" not in colunas or "matricula" not in colunas:
-        return None          # cabecalho truncado: bloco nao aproveitavel
-
-    campos = distribuir(valores, colunas)
-    return Segurado(
-        matricula=campos.get("matricula", "").strip(),
-        nome=campos.get("nome", "").strip(),
-        cpf=campos.get("cpf", "").strip(),
-        situacao=campos.get("situacao", "").strip(),
-        estrutura=campos.get("estrutura", "").strip(),
-        unidade=unidade,
-        fonte=fonte,
-        admissao=campos.get("admissao", "").strip(),
-        pagina=pagina,
-    )
-
-
-def _ler_regime(linha: Linha, segurado: Segurado) -> None:
-    """Regime previdenciario e forma de ingresso, da linha que comeca em RPPS.
-
-    As duas saem da mesma linha, e sao lidas por posicao relativa as celulas:
-    a primeira celula e o regime, e a forma de ingresso e a celula de texto
-    mais larga entre as seguintes -- "Nomeacao para cargo efetivo" ao lado de
-    "Nao", "30", "200" e "0". Escolher pela largura, e nao por indice fixo,
-    porque a folha omite celula vazia: contar posicoes acerta na folha mensal e
-    erra na de rescisao.
-    """
-    celulas = linha.celulas
-    if not celulas:
-        return
-    segurado.regime = celulas[0].texto.strip()
-
-    candidatas = [c.texto.strip() for c in celulas[1:]
-                  if any(ch.isalpha() for ch in c.texto)]
-    if candidatas:
-        segurado.ingresso = max(candidatas, key=len)
-
-
-def _ler_verba(linha: Linha, colunas: Dict[str, Coluna]) -> Optional[Verba]:
-    """Uma linha do calculo mensal, com os numeros na coluna certa."""
-    achado = RE_VERBA.match(linha.texto.strip())
-    if not achado:
-        return None
-    campos = distribuir(linha, colunas)
-    return Verba(
-        codigo=achado.group(1),
-        descricao=achado.group(2).strip(),
-        tipo=achado.group(3),
-        referencia=numero(campos.get("referencia", "")),
-        base=numero(campos.get("base", "")),
-        integral=numero(campos.get("integral", "")),
-        valor=numero(campos.get("valor", "")),
-    )
-
-
 # ---------------------------------------------------------------------- #
 def _avisar(folha: Folha) -> None:
     """O que a tela precisa dizer antes de alguem exportar."""
-    if folha.paginas_sem_texto:
-        quantas = len(folha.paginas_sem_texto)
+    folha.avisos.extend(folha.avisos_de_leitura)
+    for origem in folha.origens:
+        if not origem.paginas_sem_texto:
+            continue
+        # O numero da pagina so localiza alguma coisa se vier com o nome do
+        # arquivo: anexados dois PDFs, "página 7" existe nos dois.
+        onde = " de {}".format(origem.nome) if len(folha.origens) > 1 else ""
         folha.avisos.append(
-            "{} página(s) sem texto — a folha parece digitalizada. "
-            "Os valores dessas páginas NÃO foram lidos: {}.".format(
-                quantas, _resumir(folha.paginas_sem_texto)))
+            "{} página(s){} digitalizada(s) — imagem ou foto da folha, sem o "
+            "texto do sistema (o texto de OCR não é lido: um dígito trocado "
+            "passaria despercebido). Os valores dessas páginas NÃO foram "
+            "lidos: {}.".format(
+                len(origem.paginas_sem_texto), onde,
+                _resumir(origem.paginas_sem_texto)))
+
+    # O documento digitalizado ja foi nomeado no aviso acima, com o motivo;
+    # dizer de novo que ele "nao esta num formato conhecido" mandaria procurar
+    # o problema no lugar errado.
+    vazias = [o.nome for o in folha.origens
+              if not o.segurados and not o.paginas_sem_texto]
+    if vazias and folha.segurados:
+        folha.avisos.append(
+            "Nenhum segurado foi encontrado em {}. Esse documento não entrou "
+            "no arquivo — confira se ele está em um dos formatos conhecidos "
+            "({}).".format(", ".join(vazias), ", ".join(formatos.nomes())))
+
+    if not folha.segurados and folha.paginas_sem_texto:
+        # Digitalizado nao e formato novo: mandar "analisar o leitor" seria
+        # pedir codigo para o que se resolve pedindo o PDF certo.
+        folha.avisos.append(
+            "Nenhum segurado encontrado: o documento é digitalizado (foto ou "
+            "escaneamento). Peça ao município o PDF gerado pelo sistema de "
+            "folha.")
+        return
 
     if not folha.segurados:
+        # A mensagem diz QUAIS formatos o programa conhece: quem recebe
+        # "formato não reconhecido" sem isso nao tem o que fazer com a
+        # informacao, e a saida util e mandar o PDF para acrescentar o leitor.
         folha.avisos.append(
-            "Nenhum segurado encontrado. O PDF não parece ser uma folha de "
-            "pagamento no formato esperado.")
+            "Nenhum segurado encontrado. Este PDF não está em nenhum dos "
+            "formatos de folha que o programa conhece ({}). Se for de um "
+            "município novo, o PDF precisa ser analisado para acrescentar o "
+            "leitor dele.".format(", ".join(formatos.nomes())))
         return
 
     if folha.competencia is None:
@@ -313,6 +290,25 @@ def _avisar(folha: Folha) -> None:
                 len(sem_matricula),
                 _resumir([s.nome or "(sem nome)" for s in sem_matricula])))
 
+    # Previdencia do 13o dentro de um bloco que NAO e de 13o: a rescisao que
+    # paga o 13o proporcional junto ("8101 PARANATINGA PREV 13 SALARIO"). O
+    # bloco sai inteiro na competencia do mes, com a base do 13o somada -- e
+    # se o RPPS quiser o 13o na competencia 13, isso e decisao de quem declara,
+    # que a tela precisa mostrar em vez de esconder.
+    com_decimo = [s for s in folha.segurados if not folha.e_decimo_terceiro
+                  and not s.e_decimo_terceiro
+                  and any(_e_verba_do_decimo(v.descricao)
+                          for v in s.verbas_previdencia)]
+    if com_decimo:
+        folha.avisos.append(
+            "{} segurado(s) têm previdência de 13º salário dentro do bloco do "
+            "mês (rescisão com 13º proporcional, em regra). A base e a "
+            "contribuição do 13º estão somadas à linha do mês, que é a regra "
+            "deste município — para separar na competência 13, mude a regra "
+            "na tela Municípios: {}.".format(
+                len(com_decimo),
+                _resumir([s.matricula or s.nome for s in com_decimo])))
+
     repetidas = _matriculas_repetidas(folha.segurados)
     if repetidas:
         folha.avisos.append(
@@ -322,11 +318,20 @@ def _avisar(folha: Folha) -> None:
 
 
 def _matriculas_repetidas(segurados: Sequence[Segurado]) -> List[str]:
-    vistas: Dict[str, int] = {}
+    """Quem sai duas vezes NA MESMA competencia -- e so isso e problema.
+
+    Contar a matricula crua acusaria os cem servidores de Barra do Garcas que
+    aparecem na folha mensal e na de 13o do mesmo PDF. Esses dois blocos viram
+    linhas em competencias diferentes (07 e 13), que e o certo, e avisar sobre
+    eles treinaria o usuario a ignorar o aviso -- justamente o aviso que
+    precisa ser levado a serio quando a repeticao for de verdade.
+    """
+    vistas: Dict[tuple, int] = {}
     for segurado in segurados:
         if segurado.matricula:
-            vistas[segurado.matricula] = vistas.get(segurado.matricula, 0) + 1
-    return [m for m, quantas in vistas.items() if quantas > 1]
+            chave = (segurado.matricula, segurado.e_decimo_terceiro)
+            vistas[chave] = vistas.get(chave, 0) + 1
+    return [m for (m, _decimo), quantas in vistas.items() if quantas > 1]
 
 
 def _resumir(itens: Sequence, limite: int = 10) -> str:
