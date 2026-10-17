@@ -133,6 +133,9 @@ class TelaFolha(Tela):
         # arquivo por competencia, e dois seriam duas versoes da mesma coisa.
         self.caminho_complementar: str = ""
         self.linhas: List[Any] = []
+        # A comparacao com o cadastro do SISPREVWEB, refeita a cada
+        # `_remontar` -- as linhas mudam com a competencia e as fontes.
+        self.comparacao_sisprev: Any = None
         self._exportou = False
         self._silencio_fontes = False
 
@@ -625,10 +628,15 @@ class TelaFolha(Tela):
         self.grade_fontes = tk.Frame(self.tela_fontes, bg=COR_CARTAO)
         self._janela_fontes = self.tela_fontes.create_window(
             (0, 0), window=self.grade_fontes, anchor="nw")
+        # A largura da lista e reaplicada DEPOIS do evento, e nao dentro dele.
+        # Dentro, o Tk aceita o valor e nao redimensiona a grade: quando a
+        # barra de rolagem entra e a area encolhe, a grade ficava com a
+        # largura antiga (1.422 pixels numa area de 1.050) e o campo do
+        # codigo, que mora na ponta direita, saia da vista -- cortado ou
+        # sumido de vez.
         self.tela_fontes.bind(
             "<Configure>",
-            lambda e: self.tela_fontes.itemconfigure(self._janela_fontes,
-                                                     width=e.width))
+            lambda _e: self.tela_fontes.after_idle(self._alinhar_lista_fontes))
         # A altura da area acompanha a grade em vez de ser medida uma unica
         # vez. Medida so na montagem, ela dependia de a janela ja ter
         # assentado: quando a leitura termina pela fila de eventos do
@@ -1001,6 +1009,13 @@ class TelaFolha(Tela):
         else:
             self.barra_fontes.pack_forget()
             self.tela_fontes.yview_moveto(0)
+        self.tela_fontes.after_idle(self._alinhar_lista_fontes)
+
+    def _alinhar_lista_fontes(self) -> None:
+        """A grade da largura da area visivel -- ver o bind em `_montar_fontes`."""
+        largura = self.tela_fontes.winfo_width()
+        if largura > 1 and self.grade_fontes.winfo_width() != largura:
+            self.tela_fontes.itemconfigure(self._janela_fontes, width=largura)
 
     def _rolar_fontes(self, evento) -> str:
         self.tela_fontes.yview_scroll(-1 * (evento.delta // 120), "units")
@@ -1025,7 +1040,15 @@ class TelaFolha(Tela):
     def _ao_digitar_fonte(self, chave: str) -> None:
         if self._silencio_fontes:
             return
-        self._marcar_fonte(chave)
+        # Enquanto a digitacao nao para, o codigo NAO esta gravado: o relogio
+        # diz isso. O certo verde so vem depois de `_gravar_fontes`, para que
+        # o verde queira dizer "gravado" e nada alem disso.
+        marca = self.marcas_fonte.get(chave)
+        codigo = self.campos_fonte[chave].get().strip()
+        if marca is not None and codigo.isdigit():
+            marca.configure(text=icone("relogio"), fg=COR_MUDO)
+        else:
+            self._marcar_fonte(chave)
         # Digitar "5085" dispara o trace quatro vezes, e cada gravacao recasa
         # as fontes, remonta as 774 linhas e reescreve o json. Sem o adiamento
         # a tela engasga a cada tecla; com ele, grava quando a digitacao para.
@@ -1045,6 +1068,7 @@ class TelaFolha(Tela):
         municipio = self.estado.municipio
         por_chave = {f.chave: f for f in self.estado.folha.fontes}
         mudou = False
+        gravadas: List[str] = []
         for chave, variavel in self.campos_fonte.items():
             fonte = por_chave.get(chave)
             if fonte is None:
@@ -1059,14 +1083,23 @@ class TelaFolha(Tela):
             if codigo != cadastro.escolha_de(municipio, fonte):
                 cadastro.escolher(municipio, fonte, codigo)
                 mudou = True
+                gravadas.append("código {} gravado para {}".format(
+                    codigo, fonte) if codigo
+                    else "código apagado de {}".format(fonte))
 
-        if mudou and not cadastro.salvar():
-            self.janela.status(
-                "As escolhas valem nesta sessão: o cadastro não pôde ser "
-                "gravado em {}.".format(cadastro.caminho))
+        salvo = cadastro.salvar() if mudou else True
         if mudou:
             self.janela.casar_fontes()
             self._remontar()
+        # Depois de `_remontar`, que tambem escreve na barra de status: a
+        # confirmacao do que foi gravado e a ultima coisa que se le.
+        if not salvo:
+            self.janela.status(
+                "As escolhas valem nesta sessão: o cadastro não pôde ser "
+                "gravado em {}.".format(cadastro.caminho))
+        elif gravadas:
+            recado = "; ".join(gravadas)
+            self.janela.status(recado[:1].upper() + recado[1:] + ".")
         self._atualizar_resumo_fontes()
 
     def _marcar_fonte(self, chave: str) -> None:
@@ -1082,16 +1115,34 @@ class TelaFolha(Tela):
             marca.configure(text=icone("certo"), fg=COR_OK)
 
     def _atualizar_resumo_fontes(self) -> None:
-        """O contador do cabecalho -- e o cartao inteiro, quando nada falta."""
+        """O contador do cabecalho -- e o cartao inteiro, quando nada falta.
+
+        Resolvida a ultima fonte, o cartao FICA, com tudo verde: some so na
+        proxima leitura ou na volta a esta tela (`_sincronizar_fontes`).
+        Antes ele sumia no instante da gravacao -- 400 ms depois da ultima
+        tecla, as vezes no meio do codigo --, e quem digitava nao chegava a
+        ver se o codigo tinha entrado.
+        """
         faltam = self.janela.fontes_pendentes()
-        if not faltam:
+        if not faltam and not self.campos_fonte:
             self._mostrar_cartao_fontes(False)
             return
         for chave in self.campos_fonte:
             self._marcar_fonte(chave)
         total = len(self.estado.folha.fontes) if self.estado.tem_folha() else 0
-        self.var_fontes_resumo.set(
-            "{} de {} fonte(s) sem código".format(len(faltam), total))
+        titulo = self.cartao_fontes.rotulo_titulo
+        if faltam:
+            self.var_fontes_resumo.set(
+                "{} de {} fonte(s) sem código".format(len(faltam), total))
+            self.rotulo_fontes_resumo.configure(fg=COR_ATENCAO)
+            if titulo is not None:
+                titulo.configure(text="Falta resolver: fontes sem código")
+        else:
+            self.var_fontes_resumo.set(
+                "todas as {} fontes têm código".format(total))
+            self.rotulo_fontes_resumo.configure(fg=COR_OK)
+            if titulo is not None:
+                titulo.configure(text="Fontes resolvidas")
 
     def _mostrar_cartao_fontes(self, mostrar: bool) -> None:
         """Poe ou tira o cartao da tela, sempre acima do painel de resultado."""
@@ -1145,6 +1196,12 @@ class TelaFolha(Tela):
         if not escolhido or escolhido == self.estado.municipio:
             return
         self.estado.municipio = escolhido
+        # O cadastro de segurados era o do municipio anterior: casar a folha
+        # de um com o cadastro de outro trocaria matriculas sem erro nenhum.
+        if self.estado.cadastro_sisprev is not None:
+            self.estado.cadastro_sisprev = None
+            self.comparacao_sisprev = None
+            self._pintar_sisprev()
         self._pintar_regras()
         if self.estado.folha_lida is not None:
             self.janela.aplicar_regras()
@@ -1389,7 +1446,11 @@ class TelaFolha(Tela):
         self._modelos = {NOMES_DOS_MODELOS[m]: m
                          for m in (MODELO_COMPLETO, MODELO_REDUZIDO)}
 
-        escolha = tk.Frame(cartao.conteudo, bg=COR_CARTAO)
+        principal = tk.Frame(cartao.conteudo, bg=COR_CARTAO)
+        principal.pack(fill="x")
+        self._montar_sisprev(cartao.conteudo)
+
+        escolha = tk.Frame(principal, bg=COR_CARTAO)
         escolha.pack(side="left", fill="x", expand=True)
         rotulo_campo(escolha, "Modelo do layout").pack(anchor="w", pady=(0, 4))
         self.var_modelo = tk.StringVar(value=NOMES_DOS_MODELOS[MODELO_COMPLETO])
@@ -1402,11 +1463,47 @@ class TelaFolha(Tela):
         moldura.acompanhar(self.combo_modelo)
         self.combo_modelo.bind("<MouseWheel>", lambda e: "break")
 
-        Botao(cartao.conteudo, text="EXPORTAR XLSX", primario=True,
+        Botao(principal, text="EXPORTAR XLSX", primario=True,
               command=lambda: self._exportar("xlsx")).pack(
             side="right", padx=(8, 0))
-        Botao(cartao.conteudo, text="EXPORTAR CSV",
+        Botao(principal, text="EXPORTAR CSV",
               command=lambda: self._exportar("csv")).pack(side="right")
+
+    def _montar_sisprev(self, dono: tk.Misc) -> None:
+        """A segunda linha do cartao: as matriculas do SISPREVWEB.
+
+        Existe porque a matricula da folha quase nunca e o codigo que o
+        SISPREVWEB da ao segurado, e o importador acha o segurado por ele: em
+        Colniza, 529 linhas voltaram com "segurado nao encontrado". O CSV de
+        segurados que o proprio SISPREVWEB exporta resolve -- ver
+        `arrecadacao.segurados_sisprev`.
+
+        Fica no cartao de exportar, e nao no alto da tela, porque e o ultimo
+        passo: so faz sentido com a folha lida e conferida, e o que ele muda e
+        o arquivo que sai.
+        """
+        tk.Frame(dono, bg=COR_BORDA, height=1).pack(fill="x", pady=(12, 10))
+        linha = tk.Frame(dono, bg=COR_CARTAO)
+        linha.pack(fill="x")
+
+        texto = tk.Frame(linha, bg=COR_CARTAO)
+        texto.pack(side="left", fill="x", expand=True)
+        rotulo_campo(texto, "Matrículas do SISPREVWEB").pack(anchor="w")
+        self.var_sisprev = tk.StringVar()
+        self.rotulo_sisprev = tk.Label(
+            texto, textvariable=self.var_sisprev, bg=COR_CARTAO, fg=COR_MUDO,
+            font=fonte(T_LEGENDA), anchor="w", justify="left", wraplength=620)
+        self.rotulo_sisprev.pack(anchor="w", fill="x", pady=(2, 0))
+        acompanhar_largura(self.rotulo_sisprev, folga=16)
+
+        self.btn_exportar_sisprev = Botao(
+            linha, text="EXPORTAR OS 3 ARQUIVOS", primario=True,
+            command=self._exportar_com_sisprev, state="disabled")
+        self.btn_exportar_sisprev.pack(side="right", padx=(8, 0))
+        self.btn_anexar_sisprev = Botao(
+            linha, text="ANEXAR CSV DO SISPREV", command=self._anexar_sisprev)
+        self.btn_anexar_sisprev.pack(side="right")
+        self._pintar_sisprev()
 
     def _mostrar_exportacao(self, mostrar: bool) -> None:
         """`before`: entra na FRENTE da fila do pack, ancorada embaixo."""
@@ -1610,6 +1707,7 @@ class TelaFolha(Tela):
                              categoria=self.var_categoria.get())
         self.estado.linhas = self.linhas
 
+        self._comparar_sisprev()
         numeros = resumo(self.linhas)
         self._pintar_tabela()
         self._pintar_metricas(numeros)
@@ -1745,6 +1843,151 @@ class TelaFolha(Tela):
                 "Arquivo gerado:\n\n{}\n\nAbrir agora?".format(destino)):
             try:
                 os.startfile(destino)      # type: ignore[attr-defined]
+            except OSError:
+                pass
+
+    # ------------------------------------------------------------------ #
+    # matriculas do SISPREVWEB
+    # ------------------------------------------------------------------ #
+    def _anexar_sisprev(self) -> None:
+        from arrecadacao.segurados_sisprev import CadastroInvalido, ler_cadastro
+        inicial = Path(self.caminho_pdf).parent if self.caminho_pdf else None
+        caminho = filedialog.askopenfilename(
+            title="Cadastro de segurados exportado pelo SISPREVWEB (CSV)",
+            initialdir=str(inicial) if inicial else None,
+            filetypes=[("CSV", "*.csv"), ("Todos os arquivos", "*.*")])
+        if not caminho:
+            return
+        try:
+            segurados = ler_cadastro(caminho)
+        except (OSError, CadastroInvalido) as erro:
+            messagebox.showerror(APP_NOME, str(erro))
+            return
+        self.estado.cadastro_sisprev = (caminho, segurados)
+        self._comparar_sisprev()
+        self.repensar_rolagem()
+        if self.comparacao_sisprev is not None:
+            self.janela.status("Cadastro do SISPREVWEB comparado: {}.".format(
+                ", ".join("{} {}".format(quantos, situacao.lower())
+                          for situacao, quantos
+                          in self.comparacao_sisprev.contagem().items())))
+
+    def _comparar_sisprev(self) -> None:
+        cadastro = self.estado.cadastro_sisprev
+        if cadastro is None or not self.linhas:
+            self.comparacao_sisprev = None
+        else:
+            from arrecadacao.segurados_sisprev import comparar
+            caminho, segurados = cadastro
+            self.comparacao_sisprev = comparar(self.linhas, segurados, caminho)
+        self._pintar_sisprev()
+
+    def _pintar_sisprev(self) -> None:
+        if not hasattr(self, "btn_exportar_sisprev"):
+            return
+        resultado = self.comparacao_sisprev
+        if resultado is None:
+            self.var_sisprev.set(
+                "A matrícula da folha quase nunca é o código do segurado no "
+                "SISPREVWEB. Anexe o CSV de segurados exportado por ele para "
+                "trocar pelo código certo (casa por nome + data de admissão).")
+            self.rotulo_sisprev.configure(fg=COR_MUDO)
+            self.btn_exportar_sisprev.configure(state="disabled")
+            return
+        from arrecadacao.segurados_sisprev import (DIFERENTE, ENCONTRADA,
+                                                   NAO_ENCONTRADO)
+        quantos = resultado.contagem()
+        sugeridos = sum(1 for c in resultado.comparacoes if c.sugestao)
+        self.var_sisprev.set(
+            "{}:  {} com a mesma matrícula · {} com matrícula trocada · {} não "
+            "encontrado(s){}".format(
+                Path(resultado.arquivo).name, quantos[ENCONTRADA],
+                quantos[DIFERENTE], quantos[NAO_ENCONTRADO],
+                " ({} com sugestão na planilha)".format(sugeridos)
+                if sugeridos else ""))
+        self.rotulo_sisprev.configure(
+            fg=COR_ATENCAO if quantos[NAO_ENCONTRADO] else COR_OK)
+        self.btn_exportar_sisprev.configure(state="normal")
+
+    def _exportar_com_sisprev(self) -> None:
+        """Os tres arquivos de uma vez: o normal, o ajustado e a comparacao.
+
+        O normal vai junto porque e ele que se compara com o ajustado, linha a
+        linha, quando a importacao reclamar de alguma coisa. O que se importa
+        e o ajustado -- o dialogo do fim diz qual e.
+        """
+        resultado = self.comparacao_sisprev
+        if resultado is None or not self.linhas:
+            return
+        from arrecadacao import exportacao
+        from arrecadacao.segurados_sisprev import NAO_ENCONTRADO
+        modelo = self._modelos.get(self.var_modelo.get())
+        if not self._confirmar_pendencias():
+            return
+        faltam = resultado.contagem()[NAO_ENCONTRADO]
+        if faltam and not messagebox.askyesno(
+                APP_NOME,
+                "{} de {} segurado(s) não foram achados no cadastro do "
+                "SISPREVWEB e vão com a matrícula da folha — o importador "
+                "provavelmente não vai encontrá-los.\n\nA planilha de "
+                "comparação diz o motivo de cada um e, quando há, o código "
+                "sugerido.\n\nExportar mesmo assim?".format(
+                    faltam, len(resultado.comparacoes))):
+            return
+
+        pasta, _ = pasta_gravavel(self.janela.prefs.destino(
+            Path(self.caminho_pdf).parent if self.caminho_pdf else None))
+        escolhida = filedialog.askdirectory(
+            title="Pasta para os 3 arquivos", initialdir=str(pasta))
+        if not escolhida:
+            return
+        nomes = exportacao.nomes_da_comparacao(
+            self.estado.folha, modelo, self.estado.municipio)
+        destinos = {chave: Path(escolhida) / nome
+                    for chave, nome in nomes.items()}
+        try:
+            exportacao.gravar_csv(self.linhas, destinos["normal"], modelo)
+            exportacao.gravar_csv(resultado.linhas_ajustadas(),
+                                  destinos["ajustado"], modelo)
+            exportacao.gravar_comparacao_xlsx(
+                resultado, destinos["comparacao"], self.estado.folha,
+                self.estado.municipio)
+        except PermissionError as erro:
+            messagebox.showerror(
+                APP_NOME,
+                "Um dos arquivos está aberto em outro programa:\n\n{}\n\n"
+                "Feche-o e exporte de novo.".format(
+                    getattr(erro, "filename", "") or erro))
+            return
+        except OSError as erro:
+            messagebox.showerror(
+                APP_NOME, "Não foi possível gravar:\n\n{}".format(erro))
+            return
+
+        self.estado.ultima_exportacao = str(destinos["ajustado"])
+        self._exportou = True
+        self._atualizar_trilha()
+        competencia = self._competencia_escolhida()
+        for chave, extensao, descricao in (
+                ("ajustado", "csv", "matrículas do SISPREVWEB"),
+                ("normal", "csv", "matrículas da folha"),
+                ("comparacao", "xlsx", "comparação com o SISPREVWEB")):
+            self.janela.indice.registrar(
+                str(destinos[chave]), extensao,
+                "{} · {} · {} linha(s) · {}".format(
+                    self.estado.municipio or "sem município",
+                    competencia or "sem competência", len(self.linhas),
+                    descricao))
+        self.janela.status("Exportados 3 arquivos em {}".format(escolhida))
+
+        if messagebox.askyesno(
+                APP_NOME,
+                "Arquivos gerados em\n{}\n\n• {}   ← importar este\n• {}\n"
+                "• {}\n\nAbrir a planilha de comparação agora?".format(
+                    escolhida, nomes["ajustado"], nomes["normal"],
+                    nomes["comparacao"])):
+            try:
+                os.startfile(str(destinos["comparacao"]))  # type: ignore[attr-defined]
             except OSError:
                 pass
 

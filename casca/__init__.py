@@ -6,4 +6,4 @@ sejam reconheciveis como da mesma familia e para nao manter duas versoes do
 mesmo botao arredondado.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.1"

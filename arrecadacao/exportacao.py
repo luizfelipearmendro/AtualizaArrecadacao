@@ -233,3 +233,113 @@ def _em_palavras(texto: str) -> str:
     """
     palavras = str(texto or "").split()
     return "".join(_sem_pontuacao(p).capitalize() for p in palavras)
+
+
+# ---------------------------------------------------------------------- #
+# a comparacao com o cadastro de segurados do SISPREVWEB
+# ---------------------------------------------------------------------- #
+# A cor da situacao na planilha: verde nada a fazer, azul trocado pelo
+# programa, amarelo para alguem olhar.
+_FUNDO_DA_SITUACAO = {
+    "Matrícula encontrada": "E3F1E6",
+    "Matrícula diferente": "E4ECF7",
+    "Segurado não encontrado": "FCEFD2",
+}
+
+
+def gravar_comparacao_xlsx(resultado, destino: Path, folha: Optional[Folha] = None,
+                           municipio: str = "") -> Path:
+    """A planilha da comparacao: uma linha por linha da folha, e o porque.
+
+    `resultado` e um `segurados_sisprev.Resultado`. Tres abas: a comparacao, os
+    segurados do SISPREVWEB que nao estao na folha, e o resumo -- quantos de
+    cada situacao, de que arquivos.
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    destino = Path(destino)
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    tinta = Font(bold=True, color="FFFFFF")
+    fundo = PatternFill("solid", fgColor="344767")
+
+    def cabecalho(aba, titulos_e_larguras):
+        for coluna, (titulo, largura) in enumerate(titulos_e_larguras, start=1):
+            celula = aba.cell(row=1, column=coluna, value=titulo)
+            celula.font = tinta
+            celula.fill = fundo
+            aba.column_dimensions[get_column_letter(coluna)].width = largura
+        aba.freeze_panes = "A2"
+        aba.auto_filter.ref = "A1:{}1".format(
+            get_column_letter(len(titulos_e_larguras)))
+
+    livro = Workbook()
+    aba = livro.active
+    aba.title = "Comparação"
+    cabecalho(aba, (("Situação", 24), ("Matrícula na folha", 14),
+                    ("Código no SISPREVWEB", 14), ("Matrícula no arquivo", 14),
+                    ("Nome", 42), ("Admissão", 12), ("Sugestão", 44),
+                    ("Observação", 70), ("Página", 8)))
+    for indice, comparacao in enumerate(resultado.comparacoes, start=2):
+        linha = comparacao.linha
+        valores = (comparacao.situacao, linha.matricula,
+                   comparacao.codigo_sisprev, comparacao.matricula_ajustada,
+                   linha.nome, linha.admissao, comparacao.sugestao,
+                   comparacao.observacao, linha.pagina or None)
+        for coluna, valor in enumerate(valores, start=1):
+            aba.cell(row=indice, column=coluna, value=valor)
+        cor = _FUNDO_DA_SITUACAO.get(comparacao.situacao)
+        if cor:
+            aba.cell(row=indice, column=1).fill = PatternFill("solid", fgColor=cor)
+
+    fora = livro.create_sheet("Só no SISPREVWEB")
+    cabecalho(fora, (("Código no SISPREVWEB", 14), ("Nome", 42),
+                     ("Admissão", 12), ("Linha no CSV", 10)))
+    for indice, segurado in enumerate(resultado.fora_da_folha, start=2):
+        fora.cell(row=indice, column=1, value=segurado.codigo)
+        fora.cell(row=indice, column=2, value=segurado.nome)
+        fora.cell(row=indice, column=3, value=segurado.admissao.strftime(
+            "%d/%m/%Y") if segurado.admissao else "")
+        fora.cell(row=indice, column=4, value=segurado.linha)
+
+    resumo = livro.create_sheet("Resumo")
+    negrito = Font(bold=True)
+    linhas_do_resumo = []
+    if folha is not None:
+        linhas_do_resumo.append(("Folha de origem", ", ".join(
+            o.nome for o in folha.origens) or Path(folha.arquivo).name))
+    if municipio:
+        linhas_do_resumo.append(("Município", municipio))
+    linhas_do_resumo.append(("Cadastro do SISPREVWEB",
+                             Path(resultado.arquivo).name))
+    linhas_do_resumo.append(("Linhas da folha", len(resultado.comparacoes)))
+    for situacao, quantas in resultado.contagem().items():
+        linhas_do_resumo.append((situacao, quantas))
+    linhas_do_resumo.append(("Só no SISPREVWEB", len(resultado.fora_da_folha)))
+    linhas_do_resumo.append((
+        "Como casa", "nome (sem acento e sem DA/DE/DOS) + data de admissão. "
+        "Sugestão é só sugestão: a matrícula não é trocada."))
+    for numero, (rotulo, valor) in enumerate(linhas_do_resumo, start=1):
+        resumo.cell(row=numero, column=1, value=rotulo).font = negrito
+        resumo.cell(row=numero, column=2, value=valor)
+    resumo.column_dimensions["A"].width = 28
+    resumo.column_dimensions["B"].width = 80
+
+    livro.save(destino)
+    return destino
+
+
+def nomes_da_comparacao(folha: Folha, modelo: str,
+                        municipio: str = "") -> Dict[str, str]:
+    """Os tres arquivos de uma exportacao com o cadastro do SISPREVWEB.
+
+    Mesmo prefixo dos tres, para ficarem juntos na pasta; o sufixo diz qual e
+    qual -- e o "_MatriculasSisprev" e o que se importa.
+    """
+    base = nome_sugerido(folha, modelo, "csv", municipio)[:-len(".csv")]
+    return {
+        "normal": base + ".csv",
+        "ajustado": base + "_MatriculasSisprev.csv",
+        "comparacao": base + "_ComparacaoSisprev.xlsx",
+    }

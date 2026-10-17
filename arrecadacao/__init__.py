@@ -6,4 +6,4 @@ janela e a um script. A casca chama `extracao.ler`, `layout.montar` e
 `exportacao.gravar_*`, nessa ordem.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.1"

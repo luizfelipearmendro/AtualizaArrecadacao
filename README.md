@@ -181,6 +181,54 @@ arquivo — `Arrecadacao_Aripuana_2026-08_Mensal.csv` —, porque a mesma
 competência sai para 29 prefeituras e ordenar a pasta por nome tem de agrupar
 por cidade.
 
+### Matrícula do segurado: o código do SISPREVWEB
+
+O importador acha o segurado pelo campo 01, e a folha traz ali a matrícula da
+**prefeitura** — que quase nunca é o código que o SISPREVWEB deu ao segurado.
+Na primeira importação real de Colniza (07/2026), 529 das 645 linhas voltaram
+com *segurado não encontrado* só por isso.
+
+Por isso, depois de ler a folha, o cartão de exportar aceita o **CSV de
+segurados exportado pelo próprio SISPREVWEB** (o `LAN-...-MODELO SISPREV.csv`).
+As colunas `CODIGO_ORGAO`, `NOME` e `DATA_ADMISSAO` são achadas pelo nome na
+primeira linha; as outras são ignoradas. **EXPORTAR OS 3 ARQUIVOS** grava,
+lado a lado na pasta escolhida:
+
+| Arquivo | O que é |
+|---------|---------|
+| `..._MatriculasSisprev.csv` | o arquivo de importação com o código do SISPREVWEB no campo 01 — **é este que se importa** |
+| `....csv` | o mesmo arquivo com a matrícula da folha, como sempre saiu |
+| `..._ComparacaoSisprev.xlsx` | uma linha por segurado com a situação, o motivo e a sugestão; uma aba com quem está só no SISPREVWEB; e o resumo |
+
+**Como casa: nome + data de admissão**, os dois juntos. O nome é comparado sem
+acento, sem pontuação e sem as partículas DA/DE/DO/DAS/DOS/E — a folha escreve
+`RAILDA ALBUQUERQUE DA SILVA` e o SISPREVWEB `RAILDA ALBUQUERQUE SILVA`. O CSV
+do SISPREVWEB repete o segurado uma vez por fonte pagadora (o de Colniza tem
+753 linhas e 100 códigos repetidos); repetido com o mesmo código é um
+cadastro só.
+
+Cada linha sai com uma situação:
+
+* **Matrícula encontrada** — o código do SISPREVWEB é o da folha;
+* **Matrícula diferente** — casou, e o arquivo ajustado leva o código do
+  SISPREVWEB;
+* **Segurado não encontrado** — não casou (ou casou com mais de um cadastro):
+  vai com a matrícula da folha, e a planilha diz por quê.
+
+Nome parecido **não** troca a matrícula. Quando há no cadastro alguém com a
+mesma admissão e nome parecido — o sobrenome de casada,
+`MARIA LUCIANA ANTUNES DE OLIVEIRA` na folha e `MARIA LUCIANA ANTUNES ALVES` no
+SISPREVWEB —, o código dele vai na coluna *Sugestão* da planilha, para quem
+conferir decidir. Trocar a matrícula pela de outra pessoa não dá erro na
+importação: credita a contribuição no segurado errado.
+
+Com a folha de 07/2026 de Colniza: 109 encontradas, 444 trocadas e 92 não
+encontradas — 37 delas com sugestão, e quase todas as outras com o nome igual e
+a admissão diferente (`05/09/2003` na folha, `28/08/2003` no SISPREVWEB), que é
+conferência de cadastro e não de arquivo.
+
+O cadastro é do município: trocar o município na tela o descarta.
+
 ---
 
 ## Regras por município
@@ -436,8 +484,9 @@ arrecadacao/              o motor, sem nenhuma dependência de interface
   complementar.py           o CSV que o município manda junto com a folha
   layout.py                 segurados -> colunas do layout, e as pendências
   fontes.py                 catálogo do SISPREVWEB e o casamento com a folha
+  segurados_sisprev.py      matrícula da folha -> código do segurado no SISPREVWEB
   municipios.py             os municípios atendidos, e qual deles a folha é
-  exportacao.py             gravação do .xlsx e do .csv, e o nome sugerido
+  exportacao.py             gravação do .xlsx, do .csv e da comparação, e o nome sugerido
 casca/                    a janela — mesma casca do AutoArial
   tela_inicio.py            "Como o trabalho anda" e os pontos de partida
   tela_folha.py             a arrecadação: município, anexar, conferir, exportar
