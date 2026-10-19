@@ -220,7 +220,16 @@ mesma admissão e nome parecido — o sobrenome de casada,
 `MARIA LUCIANA ANTUNES DE OLIVEIRA` na folha e `MARIA LUCIANA ANTUNES ALVES` no
 SISPREVWEB —, o código dele vai na coluna *Sugestão* da planilha, para quem
 conferir decidir. Trocar a matrícula pela de outra pessoa não dá erro na
-importação: credita a contribuição no segurado errado.
+importação: credita a contribuição no segurado errado. Também vira sugestão o
+**nome idêntico com outra admissão**, quando há um cadastro só com esse nome
+(a folha diz a posse, `05/09/2003`, e o SISPREVWEB a nomeação, `28/08/2003`).
+
+**REVISAR SUGESTÕES** abre a folha e o SISPREVWEB lado a lado, agrupados por
+motivo, com o que difere em destaque. Tudo começa desmarcado; o que for marcado
+sai com o código do SISPREVWEB e fica gravado por município em
+`%LOCALAPPDATA%\AtualizaArrecadacao\matriculas_aceitas.json` (chave: matrícula
+da folha + nome). No mês seguinte a mesma pessoa já entra trocada, e aparece
+marcada na revisão, para poder ser desfeita.
 
 Com a folha de 07/2026 de Colniza: 109 encontradas, 444 trocadas e 92 não
 encontradas — 37 delas com sugestão, e quase todas as outras com o nome igual e

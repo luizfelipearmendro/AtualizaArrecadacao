@@ -34,21 +34,27 @@ Cada linha da folha sai com uma de tres situacoes:
   codigo do SISPREVWEB no arquivo ajustado.
 * **Segurado não encontrado** -- nao casou, ou casou com mais de um cadastro e
   nao ha como escolher. A matricula da folha fica como esta, e a observacao diz
-  por que. Quando ha no cadastro alguem com a MESMA admissao e nome parecido
-  -- "MARIA LUCIANA ANTUNES DE OLIVEIRA" na folha, "MARIA LUCIANA ANTUNES
-  ALVES" no SISPREVWEB, sobrenome de casada --, o codigo dele vai como
-  SUGESTAO, numa coluna propria, para quem conferir decidir.
+  por que.
 
-O programa NAO casa sozinho por nome parecido, nem so pelo nome quando a
-admissao diverge. Trocar a matricula
-pela de outra pessoa nao da erro na importacao -- credita a contribuicao no
-segurado errado, e isso so aparece quando ele pedir a aposentadoria.
+**Sugestao.** Dois casos viram sugestao, para quem conferir decidir:
+
+* a MESMA admissao e nome parecido -- "MARIA LUCIANA ANTUNES DE OLIVEIRA" na
+  folha, "MARIA LUCIANA ANTUNES ALVES" no SISPREVWEB, sobrenome de casada;
+* o MESMO nome, com outra admissao, e um cadastro so com esse nome -- a folha
+  diz 05/09/2003 (a posse) e o SISPREVWEB 28/08/2003 (a nomeacao).
+
+O programa NAO casa sozinho em nenhum dos dois. Trocar a matricula pela de
+outra pessoa nao da erro na importacao -- credita a contribuicao no segurado
+errado, e isso so aparece quando ele pedir a aposentadoria. A sugestao e
+ACEITA na tela, uma a uma, e o aceite fica gravado por municipio
+(`Aceites`): no mes seguinte a mesma servidora ja entra trocada.
 """
 
 from __future__ import annotations
 
 import csv
 import io
+import json
 import re
 import unicodedata
 from dataclasses import dataclass, field, replace
@@ -100,6 +106,10 @@ class Comparacao:
     codigo_sisprev: str = ""
     observacao: str = ""
     sugestao: str = ""            # "17231 - MARIA LUCIANA ANTUNES ALVES"
+    # O cadastro sugerido (ou o aceito), para a tela mostrar lado a lado.
+    sugerido: Optional[SeguradoSisprev] = None
+    # A troca veio de uma sugestao aceita na tela, e nao do casamento.
+    aceita: bool = False
 
     @property
     def matricula_ajustada(self) -> str:
@@ -228,9 +238,26 @@ def _texto_data(valor: Optional[date]) -> str:
     return valor.strftime("%d/%m/%Y") if valor else "sem data"
 
 
+def chave_da_linha(linha: Linha) -> str:
+    """Como um aceite reconhece a linha no mes seguinte: matricula + nome.
+
+    So a matricula nao basta -- a prefeitura reaproveita numero de quem saiu,
+    e o aceite iria para outra pessoa sem ninguem ver.
+    """
+    matricula = str(linha.matricula or "").strip()
+    return "{}|{}".format(matricula.lstrip("0") or matricula,
+                          nome_comparavel(linha.nome))
+
+
 def comparar(linhas: Sequence[Linha], cadastro: Sequence[SeguradoSisprev],
-             arquivo: str = "") -> Resultado:
-    """Casa cada linha da folha com o cadastro, por nome + admissao."""
+             arquivo: str = "",
+             aceitas: Optional[Dict[str, str]] = None) -> Resultado:
+    """Casa cada linha da folha com o cadastro, por nome + admissao.
+
+    `aceitas` e {chave_da_linha: codigo do SISPREVWEB} -- as sugestoes que
+    alguem aceitou. Valem so para quem NAO casou sozinho, e so se o codigo
+    ainda existe no cadastro e nao foi para outra linha.
+    """
     cadastro = _unicos(cadastro)
     por_chave: Dict[Tuple[str, Optional[date]], List[SeguradoSisprev]] = {}
     por_nome: Dict[str, List[SeguradoSisprev]] = {}
@@ -299,22 +326,124 @@ def comparar(linhas: Sequence[Linha], cadastro: Sequence[SeguradoSisprev],
                     for h in por_nome[nome]))
         else:
             observacao = "nome não encontrado no SISPREVWEB"
+        sugerido = _sugerir(
+            nome, por_admissao.get(admissao, []) if admissao else [],
+            por_nome.get(nome, []), dono_do_codigo)
         resultado.comparacoes.append(Comparacao(
             linha, NAO_ENCONTRADO, "", observacao,
-            _sugerir(nome, por_admissao.get(admissao, []) if admissao else [],
-                     dono_do_codigo)))
+            "{} - {}".format(sugerido.codigo, sugerido.nome) if sugerido
+            else "", sugerido))
+
+    # Os aceites entram DEPOIS do casamento: um codigo que casou sozinho com
+    # outra linha vale mais que um aceite de meses atras, e a ordem das linhas
+    # na folha nao pode decidir isso.
+    por_codigo = {s.codigo: s for s in cadastro}
+    for comparacao in resultado.comparacoes:
+        if comparacao.situacao != NAO_ENCONTRADO or not aceitas:
+            continue
+        codigo = aceitas.get(chave_da_linha(comparacao.linha), "")
+        if not codigo:
+            continue
+        aceito = por_codigo.get(codigo)
+        if aceito is None:
+            comparacao.observacao += "; a sugestão aceita antes (código {}) " \
+                "não está mais no cadastro".format(codigo)
+            continue
+        if codigo in dono_do_codigo:
+            comparacao.observacao += "; a sugestão aceita antes (código {}) " \
+                "casou com outra linha (matrícula {})".format(
+                    codigo, dono_do_codigo[codigo].matricula)
+            continue
+        dono_do_codigo[codigo] = comparacao.linha
+        usados.add(aceito.linha)
+        comparacao.situacao = ENCONTRADA if _mesma_matricula(
+            codigo, comparacao.linha.matricula) else DIFERENTE
+        comparacao.codigo_sisprev = codigo
+        comparacao.sugerido = aceito
+        comparacao.aceita = True
+        comparacao.observacao = "sugestão aceita na conferência ({})".format(
+            comparacao.observacao)
 
     resultado.fora_da_folha = [s for s in cadastro if s.linha not in usados]
     return resultado
 
 
 def _sugerir(nome: str, mesma_admissao: Sequence[SeguradoSisprev],
-             dono_do_codigo: Dict[str, Linha]) -> str:
-    """O cadastro de mesma admissao com o nome mais parecido, se houver um."""
+             mesmo_nome: Sequence[SeguradoSisprev],
+             dono_do_codigo: Dict[str, Linha]) -> Optional[SeguradoSisprev]:
+    """O cadastro mais provavel para quem nao casou, ou None.
+
+    Primeiro o de mesma admissao com o nome mais parecido; senao, o UNICO
+    cadastro com o mesmo nome. Dois homonimos com outra admissao nao viram
+    sugestao: escolher um deles seria chute.
+    """
     notas = sorted(((_semelhanca(nome, nome_comparavel(s.nome)), s)
                     for s in mesma_admissao if s.codigo not in dono_do_codigo),
                    key=lambda par: -par[0])
-    if not notas or notas[0][0] < SEMELHANCA_MINIMA:
-        return ""
-    melhor = notas[0][1]
-    return "{} - {}".format(melhor.codigo, melhor.nome)
+    if notas and notas[0][0] >= SEMELHANCA_MINIMA:
+        return notas[0][1]
+    livres = [s for s in mesmo_nome if s.codigo not in dono_do_codigo]
+    if len(mesmo_nome) == 1 and len(livres) == 1:
+        return livres[0]
+    return None
+
+
+# ---------------------------------------------------------------------- #
+# aceites gravados
+# ---------------------------------------------------------------------- #
+ARQUIVO_ACEITES = "matriculas_aceitas.json"
+
+
+@dataclass
+class Aceites:
+    """As sugestoes aceitas na tela, por municipio.
+
+    {municipio: {chave_da_linha: {"codigo", "nome_folha", "nome_sisprev"}}}.
+    Os nomes vao junto so para quem abrir o arquivo saber o que foi aceito.
+    """
+
+    por_municipio: Dict[str, Dict[str, dict]] = field(default_factory=dict)
+    caminho: Optional[Path] = None
+
+    @classmethod
+    def carregar(cls, pasta: Path) -> "Aceites":
+        aceites = cls(caminho=Path(pasta) / ARQUIVO_ACEITES)
+        try:
+            bruto = json.loads(aceites.caminho.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return aceites
+        for municipio, itens in (bruto.get("aceites") or {}).items() \
+                if isinstance(bruto, dict) else []:
+            if isinstance(itens, dict):
+                aceites.por_municipio[str(municipio)] = {
+                    str(chave): dict(item) for chave, item in itens.items()
+                    if isinstance(item, dict) and str(item.get("codigo", ""))}
+        return aceites
+
+    def codigos(self, municipio: str) -> Dict[str, str]:
+        """{chave_da_linha: codigo}, a forma que `comparar` recebe."""
+        return {chave: str(item["codigo"]) for chave, item
+                in self.por_municipio.get(municipio, {}).items()}
+
+    def aceitar(self, municipio: str, linha: Linha,
+                sugerido: SeguradoSisprev) -> None:
+        self.por_municipio.setdefault(municipio, {})[chave_da_linha(linha)] = {
+            "codigo": sugerido.codigo, "nome_folha": linha.nome,
+            "nome_sisprev": sugerido.nome}
+
+    def desfazer(self, municipio: str, linha: Linha) -> None:
+        self.por_municipio.get(municipio, {}).pop(chave_da_linha(linha), None)
+
+    def salvar(self) -> bool:
+        if self.caminho is None:
+            return False
+        try:
+            self.caminho.parent.mkdir(parents=True, exist_ok=True)
+            self.caminho.write_text(json.dumps(
+                {"versao": 1, "aceites": {
+                    m: dict(sorted(i.items()))
+                    for m, i in sorted(self.por_municipio.items()) if i}},
+                indent=1, ensure_ascii=False), encoding="utf-8")
+            return True
+        except OSError:
+            return False

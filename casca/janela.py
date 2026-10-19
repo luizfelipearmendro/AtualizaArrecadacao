@@ -295,6 +295,10 @@ class Janela(tk.Frame):
         # objeto so: a tela Municipios edita, a da folha aplica.
         from arrecadacao.regras import Configuracao
         self.config = Configuracao.carregar(self.pasta_dados)
+        # As sugestoes de matricula do SISPREVWEB aceitas na tela, por
+        # municipio -- ver `arrecadacao.segurados_sisprev.Aceites`.
+        from arrecadacao.segurados_sisprev import Aceites
+        self.aceites = Aceites.carregar(self.pasta_dados)
 
         aplicar_estilo()
         self.telas: Dict[str, object] = {}

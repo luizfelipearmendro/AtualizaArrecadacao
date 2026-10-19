@@ -1500,6 +1500,10 @@ class TelaFolha(Tela):
             linha, text="EXPORTAR OS 3 ARQUIVOS", primario=True,
             command=self._exportar_com_sisprev, state="disabled")
         self.btn_exportar_sisprev.pack(side="right", padx=(8, 0))
+        self.btn_revisar_sisprev = Botao(
+            linha, text="REVISAR SUGESTÕES", command=self._revisar_sugestoes,
+            state="disabled")
+        self.btn_revisar_sisprev.pack(side="right", padx=(8, 0))
         self.btn_anexar_sisprev = Botao(
             linha, text="ANEXAR CSV DO SISPREV", command=self._anexar_sisprev)
         self.btn_anexar_sisprev.pack(side="right")
@@ -1879,7 +1883,9 @@ class TelaFolha(Tela):
         else:
             from arrecadacao.segurados_sisprev import comparar
             caminho, segurados = cadastro
-            self.comparacao_sisprev = comparar(self.linhas, segurados, caminho)
+            self.comparacao_sisprev = comparar(
+                self.linhas, segurados, caminho,
+                aceitas=self.janela.aceites.codigos(self.estado.municipio))
         self._pintar_sisprev()
 
     def _pintar_sisprev(self) -> None:
@@ -1893,21 +1899,76 @@ class TelaFolha(Tela):
                 "trocar pelo código certo (casa por nome + data de admissão).")
             self.rotulo_sisprev.configure(fg=COR_MUDO)
             self.btn_exportar_sisprev.configure(state="disabled")
+            self.btn_revisar_sisprev.configure(
+                text="REVISAR SUGESTÕES", state="disabled")
             return
         from arrecadacao.segurados_sisprev import (DIFERENTE, ENCONTRADA,
                                                    NAO_ENCONTRADO)
         quantos = resultado.contagem()
-        sugeridos = sum(1 for c in resultado.comparacoes if c.sugestao)
+        pendentes = sum(1 for c in resultado.comparacoes
+                        if c.situacao == NAO_ENCONTRADO and c.sugerido)
+        aceitas = sum(1 for c in resultado.comparacoes if c.aceita)
+        detalhes = []
+        if pendentes:
+            detalhes.append("{} com sugestão para revisar".format(pendentes))
+        if aceitas:
+            detalhes.append("{} sugestão(ões) aceita(s)".format(aceitas))
         self.var_sisprev.set(
             "{}:  {} com a mesma matrícula · {} com matrícula trocada · {} não "
             "encontrado(s){}".format(
                 Path(resultado.arquivo).name, quantos[ENCONTRADA],
                 quantos[DIFERENTE], quantos[NAO_ENCONTRADO],
-                " ({} com sugestão na planilha)".format(sugeridos)
-                if sugeridos else ""))
+                " ({})".format(", ".join(detalhes)) if detalhes else ""))
         self.rotulo_sisprev.configure(
             fg=COR_ATENCAO if quantos[NAO_ENCONTRADO] else COR_OK)
         self.btn_exportar_sisprev.configure(state="normal")
+        self.btn_revisar_sisprev.configure(
+            text="REVISAR SUGESTÕES ({})".format(pendentes) if pendentes
+            else "REVISAR SUGESTÕES",
+            state="normal" if pendentes or aceitas else "disabled")
+
+    def _revisar_sugestoes(self) -> None:
+        """Abre a revisao com as pendentes e as ja aceitas, lado a lado.
+
+        As aceitas vao junto, marcadas, para poderem ser desfeitas: o aceite
+        de um mes atras pode ter sido engano, e sem isto ele seria eterno.
+        """
+        resultado = self.comparacao_sisprev
+        if resultado is None:
+            return
+        from .revisar_sugestoes import RevisarSugestoes
+        itens = [c for c in resultado.comparacoes if c.sugerido is not None]
+        if not itens:
+            return
+
+        def salvar(escolhas: Dict[int, bool]) -> None:
+            aceites = self.janela.aceites
+            municipio = self.estado.municipio
+            novas = desfeitas = 0
+            for indice, marcada in escolhas.items():
+                comparacao = itens[indice]
+                if marcada and not comparacao.aceita:
+                    aceites.aceitar(municipio, comparacao.linha,
+                                    comparacao.sugerido)
+                    novas += 1
+                elif not marcada and comparacao.aceita:
+                    aceites.desfazer(municipio, comparacao.linha)
+                    desfeitas += 1
+            if not novas and not desfeitas:
+                return
+            gravou = aceites.salvar()
+            self._comparar_sisprev()
+            partes = []
+            if novas:
+                partes.append("{} sugestão(ões) aceita(s)".format(novas))
+            if desfeitas:
+                partes.append("{} desfeita(s)".format(desfeitas))
+            self.janela.status("{}.{}".format(
+                ", ".join(partes).capitalize(),
+                "" if gravou else " Não foi possível gravar para os "
+                "próximos meses: {}".format(aceites.caminho)))
+
+        RevisarSugestoes(self.corpo, itens, salvar)
 
     def _exportar_com_sisprev(self) -> None:
         """Os tres arquivos de uma vez: o normal, o ajustado e a comparacao.

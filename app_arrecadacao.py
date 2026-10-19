@@ -361,6 +361,17 @@ def autoteste() -> int:
             raise AssertionError("matrículas ajustadas: {}".format(matriculas))
         if not resultado.comparacoes[3].sugestao.startswith("17231"):
             raise AssertionError("faltou sugerir o 17231")
+        # Mesmo nome, outra admissao: vira sugestao, nunca troca sozinho.
+        if not resultado.comparacoes[4].sugestao.startswith("35 "):
+            raise AssertionError("faltou sugerir o 35 (mesmo nome)")
+        # A sugestao aceita entra trocada na comparacao seguinte.
+        from arrecadacao.segurados_sisprev import chave_da_linha
+        aceito = comparar([c.linha for c in resultado.comparacoes], cadastro,
+                          aceitas={chave_da_linha(resultado.comparacoes[3]
+                                                  .linha): "17231"})
+        if (aceito.comparacoes[3].situacao, aceito.comparacoes[3]
+                .matricula_ajustada) != (DIFERENTE, "17231"):
+            raise AssertionError("o aceite não trocou a matrícula")
         return "{} encontrada(s), {} trocada(s), {} não encontrada(s)".format(
             *[obtido.count(s) for s in (ENCONTRADA, DIFERENTE, NAO_ENCONTRADO)])
 
