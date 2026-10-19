@@ -126,6 +126,9 @@ class Linha:
     fonte_nome: str = ""          # "001 - 2002 -GABINETE EFETIVOS F 1.500"
     fonte_origem: str = ""        # como o codigo foi obtido -- ver `fontes`
     situacao: str = ""
+    # A data de admissao da folha. Nao vai no arquivo: e, com o nome, o que
+    # acha o segurado no cadastro do SISPREVWEB -- ver `segurados_sisprev`.
+    admissao: str = ""
     verbas: str = ""
     pagina: int = 0
     # Tudo o que o servidor recebeu no mes. Nao e coluna do layout -- e o
@@ -177,6 +180,7 @@ def montar(folha: Folha, codigo_da_fonte: Callable[[str], str],
             fonte_nome=str(segurado.fonte) if segurado.fonte else "",
             fonte_origem=origem,
             situacao=segurado.situacao,
+            admissao=segurado.admissao,
             verbas=segurado.codigos_previdencia,
             pagina=segurado.pagina,
             proventos=segurado.total_proventos,

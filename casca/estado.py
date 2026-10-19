@@ -44,6 +44,11 @@ class Estado:
     # O arquivo complementar (o CSV de Nova Olimpia): (nome, linhas).
     complementar: Any = None
     caminho_complementar: str = ""
+    # O cadastro de segurados exportado pelo SISPREVWEB: (caminho, segurados).
+    # Anexado DEPOIS da leitura, para trocar a matricula da folha pelo codigo
+    # que o importador procura -- ver `arrecadacao.segurados_sisprev`. E do
+    # municipio: trocar de municipio o descarta.
+    cadastro_sisprev: Any = None
     linhas: List[Any] = field(default_factory=list)   # layout.Linha
     caminho_pdf: str = ""
     ultima_exportacao: str = ""

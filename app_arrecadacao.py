@@ -313,6 +313,68 @@ def autoteste() -> int:
             raise AssertionError("CSV de outro mês foi usado")
         return "13º somado e separado; verbas do município; CSV complementar"
 
+    def _matriculas_do_sisprevweb():
+        """A matricula da folha trocada pelo codigo do cadastro do SISPREVWEB.
+
+        Os casos de Colniza: o CSV repete o segurado a cada fonte pagadora (e
+        um cadastro so, nao dois), a folha escreve "DA SILVA" onde o cadastro
+        escreve "SILVA", e o sobrenome de casada so vira SUGESTAO -- trocar a
+        matricula por nome parecido creditaria em outra pessoa.
+        """
+        import tempfile
+        from arrecadacao.layout import Linha
+        from arrecadacao.segurados_sisprev import (DIFERENTE, ENCONTRADA,
+                                                   NAO_ENCONTRADO, comparar,
+                                                   ler_cadastro)
+
+        csv = ("CODIGO_ORGAO;NOME;ANO;MES;FONTE_PAG;DATA_ADMISSAO\n"
+               "265-6;ANDERSON JOSE DA SILVA AZEVEDO;2026;9;A;11/03/2022\n"
+               "7545-1;FERNANDA MAURA FIRMINO;2026;9;A;16/07/2020\n"
+               "7545-1;FERNANDA MAURA FIRMINO;2026;9;B;16/07/2020\n"
+               "4008;RAILDA ALBUQUERQUE SILVA;2026;9;A;20/03/2008\n"
+               "17231;MARIA LUCIANA ANTUNES ALVES;2026;9;A;15/02/2018\n"
+               "35;RILDO SANTOS MODESTO;2026;9;A;12/03/2002\n")
+        import os
+        with tempfile.TemporaryDirectory() as pasta:
+            caminho = os.path.join(pasta, "sisprev.csv")
+            with open(caminho, "w", encoding="cp1252") as arquivo:
+                arquivo.write(csv)
+            cadastro = ler_cadastro(caminho)
+
+        def linha(matricula, nome, admissao):
+            return Linha(matricula, nome, 2026, 9, 1.0, 1.0, 0.0, 0.0, "1",
+                         "Efetivo", admissao=admissao)
+        resultado = comparar([
+            linha("265-6", "Anderson José da Silva Azevedo", "11/03/2022"),
+            linha("7545-1", "FERNANDA MAURA FIRMINO", "16/07/2020"),
+            linha("2873-3", "RAILDA ALBUQUERQUE DA SILVA", "20/03/2008"),
+            linha("6435-1", "MARIA LUCIANA ANTUNES DE OLIVEIRA", "15/02/2018"),
+            linha("2941-1", "RILDO SANTOS MODESTO", "13/02/2002"),
+        ], cadastro)
+        esperado = [ENCONTRADA, ENCONTRADA, DIFERENTE, NAO_ENCONTRADO,
+                    NAO_ENCONTRADO]
+        obtido = [c.situacao for c in resultado.comparacoes]
+        if obtido != esperado:
+            raise AssertionError("situações {} != {}".format(obtido, esperado))
+        matriculas = [l.matricula for l in resultado.linhas_ajustadas()]
+        if matriculas != ["265-6", "7545-1", "4008", "6435-1", "2941-1"]:
+            raise AssertionError("matrículas ajustadas: {}".format(matriculas))
+        if not resultado.comparacoes[3].sugestao.startswith("17231"):
+            raise AssertionError("faltou sugerir o 17231")
+        # Mesmo nome, outra admissao: vira sugestao, nunca troca sozinho.
+        if not resultado.comparacoes[4].sugestao.startswith("35 "):
+            raise AssertionError("faltou sugerir o 35 (mesmo nome)")
+        # A sugestao aceita entra trocada na comparacao seguinte.
+        from arrecadacao.segurados_sisprev import chave_da_linha
+        aceito = comparar([c.linha for c in resultado.comparacoes], cadastro,
+                          aceitas={chave_da_linha(resultado.comparacoes[3]
+                                                  .linha): "17231"})
+        if (aceito.comparacoes[3].situacao, aceito.comparacoes[3]
+                .matricula_ajustada) != (DIFERENTE, "17231"):
+            raise AssertionError("o aceite não trocou a matrícula")
+        return "{} encontrada(s), {} trocada(s), {} não encontrada(s)".format(
+            *[obtido.count(s) for s in (ENCONTRADA, DIFERENTE, NAO_ENCONTRADO)])
+
     conferir("PyMuPDF (leitura do PDF)", _pymupdf)
     conferir("openpyxl (gravação do xlsx)", _openpyxl)
     conferir("tkinter (janela)", _tk)
@@ -325,6 +387,7 @@ def autoteste() -> int:
     conferir("nomes da verba de previdência", _nomes_da_previdencia)
     conferir("folha sem fonte pagadora", _fonte_do_documento_inteiro)
     conferir("regras do município", _regras_do_municipio)
+    conferir("matrículas do SISPREVWEB", _matriculas_do_sisprevweb)
 
     linhas.append("")
     linhas.append("RESULTADO: {}".format(
