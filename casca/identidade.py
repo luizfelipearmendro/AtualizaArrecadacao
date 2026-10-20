@@ -18,7 +18,7 @@ APP_SUB = "Folha → SISPREVWEB"
 # com ela. Escrita a mao na tela, ela deixaria de acompanhar release nenhum --
 # e quem abrisse a versao seguinte reportaria problema como se fosse da
 # anterior.
-APP_VERSAO = "1.2.0"
+APP_VERSAO = "1.4.4"
 
 # Identificador do aplicativo para o Windows. Sem ele a barra de tarefas trata a
 # janela como pertencente ao host que a criou e mostra o icone DAQUELE -- a pena

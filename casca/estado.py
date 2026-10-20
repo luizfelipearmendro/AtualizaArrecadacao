@@ -49,6 +49,9 @@ class Estado:
     # que o importador procura -- ver `arrecadacao.segurados_sisprev`. E do
     # municipio: trocar de municipio o descarta.
     cadastro_sisprev: Any = None
+    # O export do Lancamento do SISPREVWEB, DEPOIS da importacao: (caminho,
+    # lancamentos). Um so para a Validacao e o Resumo -- ver `tela_validacao`.
+    lancamentos_sisprev: Any = None
     linhas: List[Any] = field(default_factory=list)   # layout.Linha
     caminho_pdf: str = ""
     ultima_exportacao: str = ""

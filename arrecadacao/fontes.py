@@ -29,8 +29,18 @@ Pelo numero E pelo nome, nessa ordem:
 2. numero igual e nome do catalogo COMECANDO pelo da folha: o PDF trunca nome
    longo na largura da coluna, e "2072- SAUDE VIG EPID. EFETIVOS" e o mesmo
    "2072- SAUDE VIG EPID. EFETIVOS F.2.600.0000605" -- mais 1;
-3. numero igual e um unico candidato, com o nome diferente: casa, mas fica
-   marcado, porque nome diferente e a assinatura de fonte trocada.
+3. numero igual e um unico candidato, com o nome diferente: NAO casa
+   sozinho. Vira sugestao, e a fonte fica pendente ate alguem confirmar --
+   ver `Correspondencia.sugerido`.
+
+   Ja casou sozinho, e foi o que deu errado em Colniza 09/2026: a folha
+   numera as SECRETARIAS ("004 - SECRETARIA MUNICIPAL DE ADMINISTRACAO") e o
+   catalogo numera outra coisa ("04 - A DEFINIR", "11 - CAMARA MUNICIPAL").
+   Dez das onze fontes casaram so pelo numero: quatro o SISPREVWEB recusou
+   (141.210,62 fora do lancamento) e seis entraram -- na fonte errada, sem
+   erro nenhum. O aviso amarelo de "casou so pelo numero" estava na tela, e
+   aviso que nao trava passa. Confirmar custa um clique por fonte, uma vez:
+   a escolha fica gravada para os meses seguintes.
 
 Fora isso NAO casa sozinho, e nao ha o que inventar:
 
@@ -87,6 +97,8 @@ COLUNA_NOME = "NOME"
 RE_NOME_CATALOGO = re.compile(r"^(\d+)\s*-\s*(.*)$")
 # "... MAC (RECURSO PRÓPRIO)" -> "... MAC": o complemento que so a folha tem.
 RE_SUFIXO_ENTRE_PARENTESES = re.compile(r"\s*\([^()]*\)\s*$")
+# As variantes que o catalogo tem do mesmo numero e a folha mensal nao usa.
+RE_VARIANTE = re.compile(r"\b(FERIAS|RESCISAO|13)\b")
 
 # Como a linha da fonte aparece na folha:
 # "2 - 1 - 2002 -GABINETE EFETIVOS F 1.500"
@@ -172,7 +184,8 @@ class FonteDaFolha:
 POR_NOME = "catálogo"
 POR_TRUNCADO = "catálogo (nome truncado na folha)"
 POR_SEM_SUFIXO = "catálogo (sem o complemento entre parênteses)"
-POR_NUMERO = "catálogo (só o número — o nome não confere)"
+POR_COMPLEMENTO = "catálogo (a folha acrescenta um complemento ao nome)"
+POR_NUMERO = "só o número confere — confirme ou escolha outra"
 POR_ESCOLHA = "escolhido por você"
 # O CSV que o municipio manda junto ja traz o codigo de cada servidor -- ver
 # `regras.fontes_do_complementar`. Vale onde nao ha catalogo nem escolha.
@@ -191,6 +204,9 @@ class Correspondencia:
     codigo: str = ""
     origem: str = ""
     candidatos: List[Fonte] = field(default_factory=list)
+    # O candidato de mesmo numero e nome diferente: SUGERIDO, nunca aplicado
+    # sozinho -- ver o item 3 de "COMO CASA", no alto do modulo.
+    sugerido: Optional[Fonte] = None
 
     @property
     def resolvida(self) -> bool:
@@ -200,7 +216,7 @@ class Correspondencia:
     def confiavel(self) -> bool:
         """Casou inteiro, ou foi a pessoa que escolheu."""
         return self.origem in (POR_NOME, POR_TRUNCADO, POR_SEM_SUFIXO,
-                               POR_ESCOLHA)
+                               POR_COMPLEMENTO, POR_ESCOLHA)
 
 
 # ---------------------------------------------------------------------- #
@@ -365,13 +381,44 @@ class Cadastro:
                 return Correspondencia(fonte=fonte, codigo=comecam[0].codigo,
                                        origem=POR_TRUNCADO,
                                        candidatos=candidatos)
-            if not comecam and len(candidatos) == 1:
-                return Correspondencia(fonte=fonte, codigo=candidatos[0].codigo,
-                                       origem=POR_NUMERO,
+            # A folha acrescenta ao nome o que o catalogo nao tem: Colniza
+            # escreve "040808 - DEPARTAMENTO DE ADMINISTRACAO - EFETIVOS" e o
+            # catalogo tem "040808 - DEPARTAMENTO DE ADMINISTRACAO", mais as
+            # variantes "- FERIAS" e "- RESCISAO" do mesmo numero. O numero de
+            # seis digitos igual E o nome do catalogo inteiro no comeco do da
+            # folha, com um so candidato assim, e casamento por nome -- 12
+            # das 24 unidades de Colniza.
+            prefixo = [f for f in candidatos
+                       if f.comparavel and alvo.startswith(f.comparavel + " ")]
+            if not comecam and len(prefixo) == 1:
+                return Correspondencia(fonte=fonte, codigo=prefixo[0].codigo,
+                                       origem=POR_COMPLEMENTO,
                                        candidatos=candidatos)
+            if not comecam and len(candidatos) == 1:
+                # Sem codigo: e sugestao. Os candidatos sao o catalogo
+                # inteiro, com a sugestao no topo -- quando ela esta errada,
+                # a certa tem de estar a mao, e nao vai ter o mesmo numero.
+                sugestao = candidatos[0]
+                return Correspondencia(
+                    fonte=fonte, origem=POR_NUMERO, sugerido=sugestao,
+                    candidatos=[sugestao] + [
+                        f for f in self.fontes_de(municipio)
+                        if f is not sugestao])
 
-        return Correspondencia(fonte=fonte, origem=AMBIGUO,
-                               candidatos=exatos or candidatos)
+        # Varios do mesmo numero e nenhum casou pelo nome: se a folha nao fala
+        # em ferias nem em rescisao e so UM candidato tambem nao fala, ele vira
+        # SUGESTAO -- "061111 - FUNDEB 70% - EDUCACAO INFANTIL" para a unidade
+        # "061111 - FUNDEB 70% - EFETIVO - EDUCACAO INFANTIL". Sugestao, e nao
+        # casamento: o nome nao confere, e nome que nao confere ja levou
+        # Colniza inteira para a fonte errada.
+        lista = exatos or candidatos
+        sugerido = None
+        if not RE_VARIANTE.search(alvo):
+            comuns = [f for f in lista if not RE_VARIANTE.search(f.comparavel)]
+            if len(comuns) == 1:
+                sugerido = comuns[0]
+        return Correspondencia(fonte=fonte, origem=AMBIGUO, candidatos=lista,
+                               sugerido=sugerido)
 
     def _catalogo_ordenado(self, municipio: str,
                            entidade: str) -> List[Fonte]:

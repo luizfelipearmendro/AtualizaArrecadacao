@@ -68,6 +68,11 @@ from .layout import Linha
 COLUNA_CODIGO = "CODIGO_ORGAO"
 COLUNA_NOME = "NOME"
 COLUNA_ADMISSAO = "DATA_ADMISSAO"
+# Opcionais: a fonte de cadastro, para conferir a da folha -- ver
+# `conferir_fontes`.
+COLUNA_FONTE = "FONTE_PAG"
+COLUNA_REMUNERACAO = "REMUNERACAO"
+COLUNA_SEGURADO = "VLR_SEGURADO"
 
 ENCONTRADA = "Matrícula encontrada"
 DIFERENTE = "Matrícula diferente"
@@ -95,6 +100,11 @@ class SeguradoSisprev:
     nome: str
     admissao: Optional[date]
     linha: int = 0                # no arquivo, para quem for conferir
+    # A fonte pagadora desta linha do CSV, e se ela ja tem valor lancado.
+    # Linha sem valor e cadastro; com valor, e lancamento de uma importacao
+    # anterior -- possivelmente na fonte errada.
+    fonte: str = ""
+    com_valor: bool = False
 
 
 @dataclass
@@ -110,6 +120,10 @@ class Comparacao:
     sugerido: Optional[SeguradoSisprev] = None
     # A troca veio de uma sugestao aceita na tela, e nao do casamento.
     aceita: bool = False
+    # A fonte em que o SISPREVWEB tem o segurado cadastrado, e se ela e
+    # outra que a da folha. So conferencia: a fonte do arquivo e a da folha.
+    fonte_cadastro: str = ""
+    fonte_diverge: bool = False
 
     @property
     def matricula_ajustada(self) -> str:
@@ -125,6 +139,8 @@ class Resultado:
     # exonerado, cedido --, mas e a lista que responde "por que o SISPREVWEB
     # tem 750 e a folha 640".
     fora_da_folha: List[SeguradoSisprev] = field(default_factory=list)
+    # {codigo: pessoas} -- codigos que o SISPREVWEB deu a mais de uma pessoa.
+    repetidos: Dict[str, List[SeguradoSisprev]] = field(default_factory=dict)
 
     def contagem(self) -> Dict[str, int]:
         quantos = {s: 0 for s in SITUACOES}
@@ -157,6 +173,18 @@ def ler_cadastro(caminho: str) -> List[SeguradoSisprev]:
     i_codigo = cabecalho.index(COLUNA_CODIGO)
     i_nome = cabecalho.index(COLUNA_NOME)
     i_admissao = cabecalho.index(COLUNA_ADMISSAO)
+    opcional = {c: cabecalho.index(c) for c in
+                (COLUNA_FONTE, COLUNA_REMUNERACAO, COLUNA_SEGURADO)
+                if c in cabecalho}
+
+    def valor(campos, coluna) -> float:
+        i = opcional.get(coluna)
+        texto = str(campos[i] if i is not None else "").strip()
+        try:
+            return float(texto.replace(".", "").replace(",", ".")
+                         if "," in texto else texto or 0)
+        except ValueError:
+            return 0.0
 
     segurados: List[SeguradoSisprev] = []
     for numero, campos in enumerate(linhas[1:], start=2):
@@ -165,9 +193,14 @@ def ler_cadastro(caminho: str) -> List[SeguradoSisprev]:
         nome = str(campos[i_nome] or "").strip()
         if not codigo and not nome:
             continue
+        i_fonte = opcional.get(COLUNA_FONTE)
         segurados.append(SeguradoSisprev(
             codigo=codigo, nome=nome, admissao=data(campos[i_admissao]),
-            linha=numero))
+            linha=numero,
+            fonte=" ".join(str(campos[i_fonte]).split())
+            if i_fonte is not None else "",
+            com_valor=bool(valor(campos, COLUNA_REMUNERACAO)
+                           or valor(campos, COLUNA_SEGURADO))))
     if not segurados:
         raise CadastroInvalido(
             "{} não tem nenhum segurado.".format(Path(caminho).name))
@@ -206,11 +239,53 @@ def _semelhanca(a: str, b: str) -> float:
 
 
 def _unicos(segurados: Sequence[SeguradoSisprev]) -> List[SeguradoSisprev]:
-    """Um por codigo -- o CSV repete o segurado a cada fonte pagadora."""
-    vistos: Dict[str, SeguradoSisprev] = {}
+    """Um por PESSOA -- o CSV repete o segurado a cada fonte pagadora.
+
+    A pessoa e codigo + nome + admissao, e nao so o codigo. O CSV de Colniza
+    tem o codigo 17834 em KAUANA KELY DA SILVA e em RONALDO GARCIA CABRAL:
+    contado so pelo codigo, o segundo sumia do cadastro sem aviso. Ver
+    `_codigos_repetidos`.
+    """
+    vistos: Dict[tuple, SeguradoSisprev] = {}
     for segurado in segurados:
-        vistos.setdefault(segurado.codigo, segurado)
+        vistos.setdefault((segurado.codigo, nome_comparavel(segurado.nome),
+                           segurado.admissao), segurado)
     return list(vistos.values())
+
+
+def _codigos_repetidos(cadastro: Sequence[SeguradoSisprev]
+                       ) -> Dict[str, List[SeguradoSisprev]]:
+    """Os codigos que o SISPREVWEB deu a mais de uma pessoa.
+
+    Nenhum deles pode ir para o arquivo: o importador acha o segurado pelo
+    codigo, e com duas pessoas no mesmo codigo a contribuicao de uma pode ser
+    creditada na outra. E erro de cadastro do SISPREVWEB, e e la que se
+    corrige -- a planilha diz quais sao.
+    """
+    por_codigo: Dict[str, List[SeguradoSisprev]] = {}
+    for segurado in cadastro:
+        por_codigo.setdefault(segurado.codigo, []).append(segurado)
+    return {c: s for c, s in por_codigo.items() if len(s) > 1}
+
+
+def _aviso_de_repetido(codigo: str, pessoas: Sequence[SeguradoSisprev]) -> str:
+    return ("o código {} está no SISPREVWEB para mais de uma pessoa ({}) — "
+            "corrija o cadastro do SISPREVWEB antes de usar este código"
+            .format(codigo, "; ".join(p.nome for p in pessoas)))
+
+
+def _contido(a: str, b: str) -> bool:
+    """Um nome dentro do outro, com o mesmo primeiro nome.
+
+    "ADINA SILVA" em "ADINA SILVA BONETTO": o sobrenome que um dos dois
+    sistemas acrescentou. Pela semelhanca de texto da 0,73 e nao vira
+    sugestao -- um sobrenome inteiro pesa muito num nome curto. Exige ao
+    menos duas palavras no menor: "MARIA" estaria contido em metade da folha.
+    """
+    pa, pb = a.split(), b.split()
+    menor, maior = (pa, pb) if len(pa) <= len(pb) else (pb, pa)
+    return (len(menor) >= 2 and menor[0] == maior[0]
+            and set(menor) <= set(maior))
 
 
 def data(texto) -> Optional[date]:
@@ -259,7 +334,8 @@ def comparar(linhas: Sequence[Linha], cadastro: Sequence[SeguradoSisprev],
     ainda existe no cadastro e nao foi para outra linha.
     """
     cadastro = _unicos(cadastro)
-    por_chave: Dict[Tuple[str, Optional[date]], List[SeguradoSisprev]] = {}
+    repetidos = _codigos_repetidos(cadastro)
+    por_chave:Dict[Tuple[str, Optional[date]], List[SeguradoSisprev]] = {}
     por_nome: Dict[str, List[SeguradoSisprev]] = {}
     por_admissao: Dict[Optional[date], List[SeguradoSisprev]] = {}
     for segurado in cadastro:
@@ -268,7 +344,7 @@ def comparar(linhas: Sequence[Linha], cadastro: Sequence[SeguradoSisprev],
         por_nome.setdefault(nome, []).append(segurado)
         por_admissao.setdefault(segurado.admissao, []).append(segurado)
 
-    resultado = Resultado(arquivo=arquivo)
+    resultado = Resultado(arquivo=arquivo, repetidos=repetidos)
     usados: set = set()
     # Um codigo do SISPREVWEB so pode ir para UMA linha: duas linhas com o
     # mesmo identificador na mesma competencia o importador recusa, e somar as
@@ -294,6 +370,12 @@ def comparar(linhas: Sequence[Linha], cadastro: Sequence[SeguradoSisprev],
 
         if len(candidatos) == 1:
             achado = candidatos[0]
+            if achado.codigo in repetidos:
+                resultado.comparacoes.append(Comparacao(
+                    linha, NAO_ENCONTRADO, "",
+                    _aviso_de_repetido(achado.codigo,
+                                       repetidos[achado.codigo])))
+                continue
             if achado.codigo in dono_do_codigo:
                 resultado.comparacoes.append(Comparacao(
                     linha, NAO_ENCONTRADO, achado.codigo,
@@ -326,9 +408,14 @@ def comparar(linhas: Sequence[Linha], cadastro: Sequence[SeguradoSisprev],
                     for h in por_nome[nome]))
         else:
             observacao = "nome não encontrado no SISPREVWEB"
+        # O homonimo pode ser justamente o dono de um codigo repetido -- e
+        # entao ele nao vira sugestao, e quem le precisa saber por que.
+        for codigo in sorted({h.codigo for h in por_nome.get(nome, [])
+                              if h.codigo in repetidos}):
+            observacao += "; " + _aviso_de_repetido(codigo, repetidos[codigo])
         sugerido = _sugerir(
             nome, por_admissao.get(admissao, []) if admissao else [],
-            por_nome.get(nome, []), dono_do_codigo)
+            por_nome.get(nome, []), dono_do_codigo, repetidos)
         resultado.comparacoes.append(Comparacao(
             linha, NAO_ENCONTRADO, "", observacao,
             "{} - {}".format(sugerido.codigo, sugerido.nome) if sugerido
@@ -343,6 +430,10 @@ def comparar(linhas: Sequence[Linha], cadastro: Sequence[SeguradoSisprev],
             continue
         codigo = aceitas.get(chave_da_linha(comparacao.linha), "")
         if not codigo:
+            continue
+        if codigo in repetidos:
+            comparacao.observacao += "; a sugestão aceita antes não vale: " \
+                + _aviso_de_repetido(codigo, repetidos[codigo])
             continue
         aceito = por_codigo.get(codigo)
         if aceito is None:
@@ -370,19 +461,31 @@ def comparar(linhas: Sequence[Linha], cadastro: Sequence[SeguradoSisprev],
 
 def _sugerir(nome: str, mesma_admissao: Sequence[SeguradoSisprev],
              mesmo_nome: Sequence[SeguradoSisprev],
-             dono_do_codigo: Dict[str, Linha]) -> Optional[SeguradoSisprev]:
+             dono_do_codigo: Dict[str, Linha],
+             repetidos: Optional[Dict[str, list]] = None
+             ) -> Optional[SeguradoSisprev]:
     """O cadastro mais provavel para quem nao casou, ou None.
 
-    Primeiro o de mesma admissao com o nome mais parecido; senao, o UNICO
-    cadastro com o mesmo nome. Dois homonimos com outra admissao nao viram
-    sugestao: escolher um deles seria chute.
+    Primeiro o de mesma admissao com o nome mais parecido -- ou com um nome
+    contido no outro (`_contido`); senao, o UNICO cadastro com o mesmo nome.
+    Dois homonimos com outra admissao nao viram sugestao: escolher um deles
+    seria chute. Codigo dado a mais de uma pessoa nunca e sugerido.
     """
+    repetidos = repetidos or {}
+
+    def livre(s: SeguradoSisprev) -> bool:
+        return s.codigo not in dono_do_codigo and s.codigo not in repetidos
+
     notas = sorted(((_semelhanca(nome, nome_comparavel(s.nome)), s)
-                    for s in mesma_admissao if s.codigo not in dono_do_codigo),
+                    for s in mesma_admissao if livre(s)),
                    key=lambda par: -par[0])
     if notas and notas[0][0] >= SEMELHANCA_MINIMA:
         return notas[0][1]
-    livres = [s for s in mesmo_nome if s.codigo not in dono_do_codigo]
+    contidos = [s for s in mesma_admissao
+                if livre(s) and _contido(nome, nome_comparavel(s.nome))]
+    if len(contidos) == 1:
+        return contidos[0]
+    livres = [s for s in mesmo_nome if livre(s)]
     if len(mesmo_nome) == 1 and len(livres) == 1:
         return livres[0]
     return None
@@ -447,3 +550,47 @@ class Aceites:
             return True
         except OSError:
             return False
+
+
+# ---------------------------------------------------------------------- #
+# conferencia da fonte: a da folha contra a do cadastro do segurado
+# ---------------------------------------------------------------------- #
+def fonte_do_cadastro(codigo: str, cadastro: Sequence[SeguradoSisprev]) -> str:
+    """A fonte em que o SISPREVWEB tem este codigo cadastrado, ou "".
+
+    O CSV traz o segurado uma vez por fonte. As linhas SEM valor sao o
+    cadastro; as COM valor sao lancamento de uma importacao anterior -- em
+    Colniza, na fonte errada ("020202 - GABINETE DO PREFEITO - FERIAS" para
+    tres do Agropecuario). Havendo mais de uma, vale a unica sem valor; se
+    nem assim for uma so, nao ha o que conferir.
+    """
+    linhas = [s for s in cadastro if s.codigo == codigo and s.fonte]
+    fontes = list(dict.fromkeys(s.fonte for s in linhas))
+    if len(fontes) == 1:
+        return fontes[0]
+    sem_valor = list(dict.fromkeys(s.fonte for s in linhas if not s.com_valor))
+    return sem_valor[0] if len(sem_valor) == 1 else ""
+
+
+def conferir_fontes(resultado: Resultado, cadastro: Sequence[SeguradoSisprev],
+                    nome_da_fonte: Dict[str, str]) -> int:
+    """Marca quem esta numa fonte pela folha e noutra pelo cadastro.
+
+    `nome_da_fonte` e {codigo: nome no catalogo}. NAO muda a fonte: a folha e
+    o que a prefeitura pagou no mes, e o cadastro pode estar desatualizado.
+    So diz onde os dois discordam, para alguem olhar. Devolve quantos.
+    """
+    from .fontes import normalizar
+    divergentes = 0
+    for comparacao in resultado.comparacoes:
+        comparacao.fonte_cadastro, comparacao.fonte_diverge = "", False
+        if comparacao.situacao == NAO_ENCONTRADO or not comparacao.codigo_sisprev:
+            continue
+        cadastrada = fonte_do_cadastro(comparacao.codigo_sisprev, cadastro)
+        comparacao.fonte_cadastro = cadastrada
+        da_folha = nome_da_fonte.get(str(comparacao.linha.fonte or ""), "")
+        if cadastrada and da_folha and normalizar(cadastrada) != normalizar(da_folha):
+            comparacao.fonte_diverge = True
+            divergentes += 1
+    return divergentes
+

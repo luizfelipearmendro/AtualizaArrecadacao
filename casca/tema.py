@@ -106,7 +106,7 @@ T_BASE = 10
 T_CARTAO = 11          # titulo de cartao
 T_MARCA = 13           # nome do aplicativo na barra
 T_TELA = 15            # titulo da tela, no cabecalho
-T_METRICA = 20         # o numero do cartao de metrica
+T_METRICA = 17         # o numero do cartao de metrica
 
 # ---------------------------------------------------------------------- #
 # tipografia
