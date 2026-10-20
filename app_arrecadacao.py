@@ -94,9 +94,10 @@ def autoteste() -> int:
     def _telas():
         # Importar as telas pega o erro de import que so apareceria ao clicar
         # no item da barra lateral -- depois de o programa ja estar aberto.
-        from casca import (tela_exportacoes, tela_folha, tela_fontes,
-                           tela_inicio, tela_municipios)
-        return "5 telas"
+        from casca import (revisar_sugestoes, tela_exportacoes, tela_folha,
+                           tela_fontes, tela_inicio, tela_municipios,
+                           tela_resumo, tela_validacao)
+        return "7 telas"
 
     def _ida_e_volta():
         """Le um PDF de mentira? Nao -- mas confere a conta que leva ao arquivo.
@@ -372,8 +373,134 @@ def autoteste() -> int:
         if (aceito.comparacoes[3].situacao, aceito.comparacoes[3]
                 .matricula_ajustada) != (DIFERENTE, "17231"):
             raise AssertionError("o aceite não trocou a matrícula")
+
+        # Codigo dado a duas pessoas nao vai para ninguem; nome contido no
+        # outro, com a mesma admissao, vira sugestao.
+        from arrecadacao.segurados_sisprev import SeguradoSisprev
+        from datetime import date
+        dia = date(2019, 2, 18)
+        repetido = comparar(
+            [linha("7038-1", "RONALDO GARCIA CABRAL", "18/02/2019"),
+             linha("62-2", "ADINA DA SILVA BONETTO", "18/02/2019")],
+            [SeguradoSisprev("17834", "KAUANA KELY DA SILVA", dia, 2),
+             SeguradoSisprev("17834", "RONALDO GARCIA CABRAL", dia, 3),
+             SeguradoSisprev("6653", "ADINA DA SILVA", dia, 4)])
+        ronaldo, adina = repetido.comparacoes
+        if ronaldo.situacao != NAO_ENCONTRADO or "17834" not in repetido.repetidos:
+            raise AssertionError("código repetido foi usado")
+        if not adina.sugestao.startswith("6653"):
+            raise AssertionError("faltou sugerir o nome contido (6653)")
+
+        # A fonte da folha conferida contra a do cadastro: a linha com valor
+        # (lancamento antigo, na fonte errada) nao conta como cadastro.
+        from arrecadacao.segurados_sisprev import conferir_fontes
+        dalila = linha("6463-1", "DALILA PEREIRA DE FREITAS", "18/02/2019")
+        dalila.fonte = "150"
+        conferida = comparar([dalila], [
+            SeguradoSisprev("17259", "DALILA PEREIRA DE FREITAS", dia, 2,
+                            fonte="061010 - FUNDEB 70 % - EFETIVOS"),
+            SeguradoSisprev("17259", "DALILA PEREIRA DE FREITAS", dia, 3,
+                            fonte="09 - BENEFÍCIOS TEMPORÁRIOS",
+                            com_valor=True)])
+        if conferir_fontes(conferida, [
+                SeguradoSisprev("17259", "DALILA PEREIRA DE FREITAS", dia, 2,
+                                fonte="061010 - FUNDEB 70 % - EFETIVOS"),
+                SeguradoSisprev("17259", "DALILA PEREIRA DE FREITAS", dia, 3,
+                                fonte="09 - BENEFÍCIOS TEMPORÁRIOS",
+                                com_valor=True)],
+                {"150": "090707 - GABINETE DA SECRETARIA DE ASSISTENCIA "
+                        "SOCIAL"}) != 1 or not conferida.comparacoes[0] \
+                .fonte_cadastro.startswith("061010"):
+            raise AssertionError("divergência de fonte não apontada")
         return "{} encontrada(s), {} trocada(s), {} não encontrada(s)".format(
             *[obtido.count(s) for s in (ENCONTRADA, DIFERENTE, NAO_ENCONTRADO)])
+
+    def _validacao_e_resumo():
+        """O que entrou no SISPREVWEB contra o arquivo, e o resumo em PDF.
+
+        O caso de Colniza 09/2026: a fonte 112 recusada inteira. E o PDF do
+        resumo de verdade, porque e ele que depende de um pedaco do PyMuPDF
+        (Story) que o empacotamento pode deixar para tras.
+        """
+        import tempfile
+        from arrecadacao.layout import Linha
+        from arrecadacao.relatorios import gravar_resumo_pdf
+        from arrecadacao.validacao import (CONFERE, NAO_ENTROU, Lancamento,
+                                           resumir_por_fonte, validar)
+
+        def linha(matricula, nome, base, fonte):
+            return Linha(matricula, nome, 2026, 9, base, round(base * 0.14, 2),
+                         0.0, 0.0, fonte, "Efetivo")
+
+        def lancado(codigo, nome, base, fonte, valor=True):
+            return Lancamento(codigo, nome, 2026, 9, base if valor else 0.0,
+                              round(base * 0.14, 2) if valor else 0.0,
+                              0.0, 0.0, fonte)
+        folha = [linha("3995", "ABIGAIR FIRMINO", 2747.73, "1267"),
+                 linha("3390", "ADRIANO SILVA DELFINO", 5015.80, "112")]
+        sisprev = [lancado("3995", "ABIGAIR FIRMINO", 2747.73, "06 - APOIO"),
+                   lancado("3995", "ABIGAIR FIRMINO", 0, "07 - SAUDE", False),
+                   lancado("3390", "ADRIANO SILVA DELFINO", 0, "05 - X", False)]
+        resultado = validar(folha, sisprev)
+        if [i.situacao for i in resultado.itens] != [CONFERE, NAO_ENTROU]:
+            raise AssertionError("situações: {}".format(
+                [i.situacao for i in resultado.itens]))
+        if resultado.fontes[0].fonte_enviada != "112":
+            raise AssertionError("a fonte recusada não veio primeiro")
+        if len(resumir_por_fonte(sisprev)) != 1:
+            raise AssertionError("o resumo contou fonte sem valor")
+        with tempfile.TemporaryDirectory() as pasta:
+            import os
+            pdf = gravar_resumo_pdf(sisprev, os.path.join(pasta, "r.pdf"))
+            if os.path.getsize(pdf) < 500:
+                raise AssertionError("PDF do resumo vazio")
+        # O numero sozinho nao casa mais: vira sugestao, sem codigo.
+        from arrecadacao.fontes import Cadastro, Fonte, FonteDaFolha
+        cadastro = Cadastro(catalogo={"TESTE": [
+            Fonte(codigo="112", nome="04 - A DEFINIR"),
+            Fonte(codigo="200", nome="07 - AT. HOSP. AMBULATORIAL")]})
+        casou = cadastro.casar("TESTE", FonteDaFolha(
+            numero=4, nome="SECRETARIA MUNICIPAL DE ADMINISTRACAO"))
+        if casou.codigo or casou.sugerido is None or \
+                casou.sugerido.codigo != "112" or len(casou.candidatos) != 2:
+            raise AssertionError("fonte casou só pelo número: {!r}".format(
+                casou.codigo))
+        # A Unidade de Colniza: o catalogo tem o nome-base e as variantes de
+        # ferias e rescisao; a folha acrescenta "- EFETIVOS".
+        cadastro = Cadastro(catalogo={"TESTE": [
+            Fonte(codigo="128", nome="040808 - DEPARTAMENTO DE ADMINISTRACAO"),
+            Fonte(codigo="111",
+                  nome="040808 - DEPARTAMENTO DE ADMINISTRACAO - FÉRIAS"),
+            Fonte(codigo="168", nome="122121 - DEPARTAMENTO DE AGUA E ESGOTO"),
+            Fonte(codigo="246",
+                  nome="122121 - DEPARTAMENTO DE AGUA E ESGOTO - FÉRIAS")]})
+        unidade = cadastro.casar("TESTE", FonteDaFolha(
+            numero=40808, nome="DEPARTAMENTO DE ADMINISTRACAO - EFETIVOS"))
+        if unidade.codigo != "128":
+            raise AssertionError("unidade com complemento: {!r}".format(
+                unidade.codigo))
+        agua = cadastro.casar("TESTE", FonteDaFolha(
+            numero=122121, nome="DEPARTAMENTO DE AGUA - EFETIVOS"))
+        if agua.codigo or agua.sugerido is None or agua.sugerido.codigo != "168":
+            raise AssertionError("nome diferente deveria virar sugestão")
+        # A tabela de ajustes: o que falta na linha, e o arquivo final so com
+        # as marcadas e a matricula escolhida.
+        from arrecadacao.ajustes import (FONTE, ZERADA, chave, diagnosticar,
+                                         linhas_finais)
+        sem_fonte = linha("1", "SEM FONTE", 1000.0, "")
+        zerada = linha("2", "ZERADA", 0.0, "112")
+        normal = linha("3", "NORMAL", 1000.0, "112")
+        if diagnosticar(sem_fonte)[0][0] != FONTE or \
+                diagnosticar(zerada)[0][0] != ZERADA or diagnosticar(normal):
+            raise AssertionError("ajustes: diagnóstico errado")
+        ajustes = {chave(normal): {"matricula": "999"}}
+        finais = linhas_finais([sem_fonte, zerada, normal], {}, ajustes)
+        if [l.matricula for l in finais] != ["1", "999"]:
+            raise AssertionError("arquivo final: {}".format(
+                [l.matricula for l in finais]))
+        return ("fonte 112 recusada achada; PDF do resumo gerado; número "
+                "sozinho vira sugestão; unidade com complemento casa; "
+                "tabela de ajustes")
 
     conferir("PyMuPDF (leitura do PDF)", _pymupdf)
     conferir("openpyxl (gravação do xlsx)", _openpyxl)
@@ -388,6 +515,7 @@ def autoteste() -> int:
     conferir("folha sem fonte pagadora", _fonte_do_documento_inteiro)
     conferir("regras do município", _regras_do_municipio)
     conferir("matrículas do SISPREVWEB", _matriculas_do_sisprevweb)
+    conferir("validação e resumo", _validacao_e_resumo)
 
     linhas.append("")
     linhas.append("RESULTADO: {}".format(

@@ -152,8 +152,18 @@ sem erro nenhum. O município vem escolhido pelo cabeçalho da folha
 |-------|--------|
 | número igual e nome igual (sem acento, sem pontuação, sem caixa) | 50 |
 | número igual e nome do catálogo **começando** pelo da folha — o PDF corta nome longo na largura da coluna | 1 |
-| número igual, candidato único, nome diferente — casa, mas a tela avisa | 0 |
+| número igual, candidato único, nome diferente — **vira sugestão; não casa sozinho** | 0 |
 | **não casa sozinho** | 8 |
+
+O número sozinho já casou, com um aviso amarelo, e foi o que deu errado em
+Colniza 09/2026: a folha numera as **secretarias**
+(`004 - SECRETARIA MUNICIPAL DE ADMINISTRACAO`) e o catálogo numera outra coisa
+(`04 - A DEFINIR`, `11 - CÂMARA MUNICIPAL`). Dez das onze fontes casaram só
+pelo número: quatro o SISPREVWEB recusou (141.210,62 fora do lançamento) e seis
+entraram na fonte errada, sem erro nenhum. Agora a linha diz na coluna
+*Ajuste* qual é a de mesmo número (`fonte: confirme 112 — 04 - A DEFINIR`), e o
+duplo clique na fonte abre o catálogo inteiro com ela no topo — uma vez: a
+escolha vale para o grupo e fica gravada.
 
 Os 8 que sobram não são falha do casamento; são coisas que o arquivo não
 responde:
@@ -188,17 +198,47 @@ O importador acha o segurado pelo campo 01, e a folha traz ali a matrícula da
 Na primeira importação real de Colniza (07/2026), 529 das 645 linhas voltaram
 com *segurado não encontrado* só por isso.
 
-Por isso, depois de ler a folha, o cartão de exportar aceita o **CSV de
-segurados exportado pelo próprio SISPREVWEB** (o `LAN-...-MODELO SISPREV.csv`).
-As colunas `CODIGO_ORGAO`, `NOME` e `DATA_ADMISSAO` são achadas pelo nome na
-primeira linha; as outras são ignoradas. **EXPORTAR OS 3 ARQUIVOS** grava,
-lado a lado na pasta escolhida:
+Por isso, logo abaixo da competência, a tela aceita o **CSV de segurados
+exportado pelo próprio SISPREVWEB** (o `LAN-...-MODELO SISPREV.csv`). As
+colunas `CODIGO_ORGAO`, `NOME` e `DATA_ADMISSAO` são achadas pelo nome na
+primeira linha (`FONTE_PAG`, se houver, confere a fonte); as outras são
+ignoradas. O que não bate aparece na tabela, na coluna *Ajuste*, antes de
+exportar.
 
-| Arquivo | O que é |
+### A tabela de ajustes
+
+Uma tabela só. Cada linha diz o que precisa na coluna **Ajuste** — fonte sem
+código, fonte para confirmar, sugestão de matrícula, matrícula não achada no
+SISPREVWEB, fonte diferente do cadastro, sem contribuição no mês — e a cor da
+linha é a do ajuste mais grave. O ajuste é feito ali:
+
+* **duplo clique na fonte**: o catálogo, com a sugestão no topo. Se o grupo da
+  folha estava sem código, a escolha vale para o grupo e fica gravada; se já
+  tinha, vale só para aquela linha;
+* **duplo clique na matrícula**: a sugestão do SISPREVWEB (aceitar fica
+  gravado), a da folha, ou o que for digitado;
+* **clique em Importar**: tira ou põe a linha no arquivo. Quem não contribuiu
+  no mês vem desmarcado;
+* **duplo clique no nome** (ou Ctrl+C): copia;
+* **SÓ O QUE PRECISA DE AJUSTE**: esconde o resto.
+* **TELA CHEIA**: a tabela na página toda para editar; **VOLTAR AO NORMAL** recoloca o resto.
+* **Buscar**: filtra por qualquer coluna — um nome, uma matrícula, um código.
+
+A lista da fonte e da matrícula filtra enquanto se digita (setas escolhem,
+Enter confirma). Linha corrigida na tabela fica **verde**, e o ajuste diz o
+que era, com *(corrigido)* no fim. Linha que não precisava de nada e foi mexida — fonte,
+matrícula ou o check de importar fora do padrão — fica **lilás**, com o aviso de
+que o segurado não tinha ajustes a fazer: pode ter sido sem querer. A *Matrícula no arquivo* é a que vai para o
+SISPREVWEB (a dele, quando o segurado foi achado); a *Matrícula na folha* fica
+para conferir. As planilhas exportadas saem em corpo 10.
+
+E três arquivos, cada um com o nome do que é:
+
+| Botão | O que é |
 |---------|---------|
-| `..._MatriculasSisprev.csv` | o arquivo de importação com o código do SISPREVWEB no campo 01 — **é este que se importa** |
-| `....csv` | o mesmo arquivo com a matrícula da folha, como sempre saiu |
-| `..._ComparacaoSisprev.xlsx` | uma linha por segurado com a situação, o motivo e a sugestão; uma aba com quem está só no SISPREVWEB; e o resumo |
+| **Arquivo final para importação** (`.csv`) | os ajustes feitos e só as linhas marcadas — **é este que se importa** |
+| **Arquivo sem alterações** (`..._SemAlteracoes.csv`) | a folha como foi lida, com a matrícula da folha e todas as linhas |
+| **Comparação SISPREV × folha** (`..._ComparacaoSisprev.xlsx`) | situação, motivo e sugestão por segurado, a fonte conferida, quem está só no SISPREVWEB e o resumo. Sem o CSV anexado, vira a **planilha de conferência** |
 
 **Como casa: nome + data de admissão**, os dois juntos. O nome é comparado sem
 acento, sem pontuação e sem as partículas DA/DE/DO/DAS/DOS/E — a folha escreve
@@ -225,7 +265,9 @@ importação: credita a contribuição no segurado errado. Também vira sugestã
 (a folha diz a posse, `05/09/2003`, e o SISPREVWEB a nomeação, `28/08/2003`).
 
 **REVISAR SUGESTÕES** abre a folha e o SISPREVWEB lado a lado, agrupados por
-motivo, com o que difere em destaque. Tudo começa desmarcado; o que for marcado
+motivo (cada grupo abre e fecha), com o que difere em destaque, um filtro de
+marcadas e não marcadas, e o clique no nome copia. Tudo começa desmarcado; o
+que for marcado
 sai com o código do SISPREVWEB e fica gravado por município em
 `%LOCALAPPDATA%\AtualizaArrecadacao\matriculas_aceitas.json` (chave: matrícula
 da folha + nome). No mês seguinte a mesma pessoa já entra trocada, e aparece
@@ -236,7 +278,43 @@ encontradas — 37 delas com sugestão, e quase todas as outras com o nome igual
 a admissão diferente (`05/09/2003` na folha, `28/08/2003` no SISPREVWEB), que é
 conferência de cadastro e não de arquivo.
 
+O mesmo CSV **confere a fonte**: quando a fonte da linha (que vem da folha)
+não é a fonte em que o SISPREVWEB tem o segurado cadastrado, a coluna
+*Ajuste* avisa (`fonte ≠ cadastro`), e a planilha de comparação tem a coluna
+*Fonte confere?*. Só avisa — o arquivo vai com a fonte da folha, que é o que
+foi pago no mês; o cadastro pode estar velho. Linha do CSV com valor já
+lançado não conta como cadastro (em Colniza eram de uma importação anterior,
+na fonte errada). Colniza 09/2026: 1 divergência em 551.
+
 O cadastro é do município: trocar o município na tela o descarta.
+
+## Validação e resumo — depois de importar
+
+A importação não diz, no fim, quanto deixou de entrar: ela recusa linha a linha
+(segurado não encontrado, fonte pagadora inexistente) e o total do Lançamento
+simplesmente fica menor que o da folha. Em Colniza 09/2026 faltaram
+**141.210,62** de base — e a causa só apareceu cruzando os dois arquivos: as
+linhas das fontes **112, 146, 239 e 122** tinham sido recusadas quase inteiras.
+
+**2 · Validação** compara o export do Lançamento do SISPREVWEB (Arrecadação ›
+Lançamento › Exportar, *depois* da importação — mesmo formato do
+`LAN-...-MODELO SISPREV.csv`, agora com valores) com o que foi no arquivo: a
+folha desta sessão, com as matrículas que foram para o arquivo, ou o próprio
+`.csv` importado, quando o programa já foi fechado. Os valores do SISPREVWEB
+são somados por código (o segurado aparece uma vez por fonte do cadastro).
+Quem não casa pelo código casa pelo nome, se ele for único dos dois lados.
+
+A tela mostra a diferença total, quantos não entraram e a tabela por fonte
+pagadora, com as que têm diferença no topo. **EXPORTAR A VALIDAÇÃO** grava um
+`.xlsx` com três abas: *Resumo*, *Por fonte pagadora* e *Por segurado*
+(confere / valor diferente / não entrou / só no SISPREVWEB — este último é
+lançamento feito à mão ou de outra importação).
+
+**3 · Resumo** monta, do mesmo export, uma linha por fonte pagadora com
+segurados, remuneração, contribuição do segurado, patronal, custo especial e
+total — o documento para mandar ao cliente, em `.xlsx`, `.csv` ou `.pdf`. Sai
+do SISPREVWEB e não da folha porque o patronal é calculado lá: o arquivo de
+importação leva zero. O PDF é montado com o PyMuPDF, sem biblioteca nova.
 
 ---
 
@@ -369,6 +447,25 @@ comum. São 29 municípios: o programa lê **uma família de formatos**, não um
 | `FastReport` | Campinápolis (prefeitura) | `Funcionário: 1990 - FULANA C.P.F.: …` |
 | `Fiorilli` | Primavera do Leste, Colniza, Comodoro, Jauru, Cocalinho | `Matrícula  Nome do Trabalhador  Admissão …` |
 
+No **Fiorilli** a fonte pagadora é o nível **mais fino** do agrupamento que a
+folha trouxer — `Unidade`, senão `Subdivisão`, senão `Divisão`:
+
+| Município | Níveis na folha | Fonte |
+|---|---|---|
+| Colniza | Divisão (11), Subdivisão (14), Unidade (24) | Unidade — `061010 - FUNDEB 70 % - EFETIVOS` é o nome no SISPREVWEB |
+| Jauru | Divisão (8), Subdivisão (11), Unidade (24) | Unidade |
+| Cocalinho | Divisão (10), Unidade (18) | Unidade — o catálogo usa os nomes das unidades |
+| Comodoro | só Unidade (53) | Unidade |
+| Primavera do Leste | só Divisão (12) | Divisão |
+
+Até a 1.3.1 o leitor usava só a Divisão — a **secretaria** —, e em Colniza
+09/2026 ela casou pelo número com outra fonte (`006 - SECRETARIA DE EDUCAÇÃO`
+→ `06 - APOIO ADMINISTRATIVO EDUCACIONAL`): quatro secretarias recusadas
+inteiras (141.210,62) e as outras na fonte errada. Em Comodoro a fonte nem era
+lida. Com a Unidade, 19 das 24 de Colniza casam sozinhas (12 delas porque a
+folha acrescenta "- EFETIVOS" ao nome do catálogo) e 4 viram sugestão; 625 de
+633 servidores ficam na mesma fonte do cadastro deles no SISPREVWEB.
+
 O **Dura Lex** é o único em que a contribuição não é verba: o relatório já vem
 filtrado pelo RPPS e traz só o valor, no rodapé de cada servidor, e a base
 apenas nos resumos de seção. A parte do 13º sai exata (o provento de 13º é a
@@ -494,11 +591,17 @@ arrecadacao/              o motor, sem nenhuma dependência de interface
   layout.py                 segurados -> colunas do layout, e as pendências
   fontes.py                 catálogo do SISPREVWEB e o casamento com a folha
   segurados_sisprev.py      matrícula da folha -> código do segurado no SISPREVWEB
+  ajustes.py                o que cada linha precisa, e o arquivo final com os ajustes
   municipios.py             os municípios atendidos, e qual deles a folha é
   exportacao.py             gravação do .xlsx, do .csv e da comparação, e o nome sugerido
+  validacao.py              export do Lançamento × arquivo importado; resumo por fonte
+  relatorios.py             planilha da validação e o resumo em .xlsx, .csv e .pdf
 casca/                    a janela — mesma casca do AutoArial
   tela_inicio.py            "Como o trabalho anda" e os pontos de partida
   tela_folha.py             a arrecadação: município, anexar, conferir, exportar
+  tela_validacao.py         o que entrou no SISPREVWEB bate com a folha?
+  tela_resumo.py            o resumo por fonte pagadora, para o cliente
+  revisar_sugestoes.py      as sugestões de matrícula, lado a lado
   tela_municipios.py        a regra geral e a de cada município
   tela_fontes.py            importação do catálogo, por município
   tela_exportacoes.py       histórico e pasta de destino

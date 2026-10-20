@@ -50,6 +50,23 @@ def _celula(linha: Linha, campo: Campo, para_csv: bool):
     return round(float(valor or 0), campo.decimais) if campo.decimais else int(valor or 0)
 
 
+def fonte_tamanho_10(livro) -> None:
+    """Toda celula em corpo 10, mantendo negrito e cor.
+
+    O padrao do openpyxl e 11, e as planilhas sao largas: em 10 cabe a
+    linha inteira na tela de quem confere.
+    """
+    from copy import copy
+    for aba in livro.worksheets:
+        for linha in aba.iter_rows():
+            for celula in linha:
+                if celula.value is None:
+                    continue
+                novo = copy(celula.font)
+                novo.size = 10
+                celula.font = novo
+
+
 # ---------------------------------------------------------------------- #
 def gravar_csv(linhas: Sequence[Linha], destino: Path, modelo: str,
                com_titulos: bool = False) -> Path:
@@ -104,6 +121,7 @@ def gravar_xlsx(linhas: Sequence[Linha], destino: Path, modelo: str,
                 celula.number_format = "#,##0.00"
 
     _aba_de_resumo(livro, linhas, modelo, folha, municipio)
+    fonte_tamanho_10(livro)
     livro.save(destino)
     return destino
 
@@ -280,18 +298,28 @@ def gravar_comparacao_xlsx(resultado, destino: Path, folha: Optional[Folha] = No
     cabecalho(aba, (("Situação", 24), ("Matrícula na folha", 14),
                     ("Código no SISPREVWEB", 14), ("Matrícula no arquivo", 14),
                     ("Nome", 42), ("Admissão", 12), ("Sugestão", 44),
-                    ("Observação", 70), ("Página", 8)))
+                    ("Observação", 70), ("Fonte no arquivo (folha)", 44),
+                    ("Fonte no cadastro do SISPREVWEB", 44),
+                    ("Fonte confere?", 12), ("Página", 8)))
     for indice, comparacao in enumerate(resultado.comparacoes, start=2):
         linha = comparacao.linha
+        fonte_arquivo = " - ".join(p for p in (
+            str(linha.fonte or ""), linha.fonte_nome) if p)
+        confere = ("não" if comparacao.fonte_diverge else
+                   "sim" if comparacao.fonte_cadastro else "")
         valores = (comparacao.situacao, linha.matricula,
                    comparacao.codigo_sisprev, comparacao.matricula_ajustada,
                    linha.nome, linha.admissao, comparacao.sugestao,
-                   comparacao.observacao, linha.pagina or None)
+                   comparacao.observacao, fonte_arquivo,
+                   comparacao.fonte_cadastro, confere, linha.pagina or None)
         for coluna, valor in enumerate(valores, start=1):
             aba.cell(row=indice, column=coluna, value=valor)
         cor = _FUNDO_DA_SITUACAO.get(comparacao.situacao)
         if cor:
             aba.cell(row=indice, column=1).fill = PatternFill("solid", fgColor=cor)
+        if comparacao.fonte_diverge:
+            aba.cell(row=indice, column=11).fill = PatternFill(
+                "solid", fgColor="FCEFD2")
 
     fora = livro.create_sheet("Só no SISPREVWEB")
     cabecalho(fora, (("Código no SISPREVWEB", 14), ("Nome", 42),
@@ -317,6 +345,22 @@ def gravar_comparacao_xlsx(resultado, destino: Path, folha: Optional[Folha] = No
     for situacao, quantas in resultado.contagem().items():
         linhas_do_resumo.append((situacao, quantas))
     linhas_do_resumo.append(("Só no SISPREVWEB", len(resultado.fora_da_folha)))
+    divergentes = sum(1 for c in resultado.comparacoes if c.fonte_diverge)
+    if divergentes:
+        linhas_do_resumo.append((
+            "Fonte diferente do cadastro",
+            "{} segurado(s): a folha põe numa fonte e o cadastro do SISPREVWEB "
+            "noutra. O arquivo vai com a da folha; filtre \"Fonte confere?\" = "
+            "não para conferir.".format(divergentes)))
+    # Erro de cadastro do SISPREVWEB, e nao da folha: quem for corrigir la
+    # precisa da lista, e ela nao cabe na observacao de uma linha so.
+    for codigo, pessoas in sorted(resultado.repetidos.items()):
+        linhas_do_resumo.append((
+            "Código repetido no SISPREVWEB: {}".format(codigo),
+            "{} — corrigir no SISPREVWEB; não vai para o arquivo".format(
+                "; ".join("{} (admissão {})".format(
+                    p.nome, p.admissao.strftime("%d/%m/%Y")
+                    if p.admissao else "sem data") for p in pessoas))))
     linhas_do_resumo.append((
         "Como casa", "nome (sem acento e sem DA/DE/DOS) + data de admissão. "
         "Sugestão é só sugestão: a matrícula não é trocada."))
@@ -326,20 +370,6 @@ def gravar_comparacao_xlsx(resultado, destino: Path, folha: Optional[Folha] = No
     resumo.column_dimensions["A"].width = 28
     resumo.column_dimensions["B"].width = 80
 
+    fonte_tamanho_10(livro)
     livro.save(destino)
     return destino
-
-
-def nomes_da_comparacao(folha: Folha, modelo: str,
-                        municipio: str = "") -> Dict[str, str]:
-    """Os tres arquivos de uma exportacao com o cadastro do SISPREVWEB.
-
-    Mesmo prefixo dos tres, para ficarem juntos na pasta; o sufixo diz qual e
-    qual -- e o "_MatriculasSisprev" e o que se importa.
-    """
-    base = nome_sugerido(folha, modelo, "csv", municipio)[:-len(".csv")]
-    return {
-        "normal": base + ".csv",
-        "ajustado": base + "_MatriculasSisprev.csv",
-        "comparacao": base + "_ComparacaoSisprev.xlsx",
-    }

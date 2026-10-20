@@ -22,7 +22,7 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Callable, Dict, List, Sequence
 
-from .componentes import Botao, Cartao, Superficie
+from .componentes import Botao, Cartao, Superficie, caixa_de_marcar
 from .tema import (COR_ATENCAO, COR_BORDA, COR_BORDA_CAMPO, COR_CARTAO,
                    COR_CARTAO_FRACO, COR_DICA, COR_FUNDO, COR_MUDO, COR_OK,
                    COR_TEXTO, COR_TITULO, GAP, T_LEGENDA, T_MINI, fonte)
@@ -63,6 +63,14 @@ class RevisarSugestoes(tk.Toplevel):
         self.marcas: Dict[int, tk.BooleanVar] = {
             indice: tk.BooleanVar(value=bool(c.aceita))
             for indice, c in self.itens}
+        # Para esconder linha e grupo sem refazer a lista: os widgets de cada
+        # sugestao, o grupo dela e quais grupos estao abertos.
+        self._widgets: Dict[int, List[tk.Widget]] = {}
+        self._img_marcado = caixa_de_marcar(self, True)
+        self._img_desmarcado = caixa_de_marcar(self, False)
+        self._grupo: Dict[int, str] = {}
+        self._aberto: Dict[str, bool] = {}
+        self._setas: Dict[str, tk.Label] = {}
 
         self.title("Sugestões do SISPREVWEB")
         self.configure(bg=COR_FUNDO)
@@ -85,10 +93,21 @@ class RevisarSugestoes(tk.Toplevel):
         cartao.pack(fill="both", expand=True, padx=GAP, pady=GAP)
         corpo = cartao.conteudo
 
+        topo = tk.Frame(corpo, bg=COR_CARTAO)
+        topo.pack(fill="x", pady=(0, 6))
         self.var_contagem = tk.StringVar()
-        tk.Label(corpo, textvariable=self.var_contagem, bg=COR_CARTAO,
+        tk.Label(topo, textvariable=self.var_contagem, bg=COR_CARTAO,
                  fg=COR_MUDO, font=fonte(T_LEGENDA), anchor="w").pack(
-            fill="x", pady=(0, 6))
+            side="left")
+        self.var_filtro = tk.StringVar(value="todas")
+        for valor, rotulo in (("nao", "Não marcadas"), ("sim", "Marcadas"),
+                              ("todas", "Todas")):
+            ttk.Radiobutton(topo, text=rotulo, value=valor,
+                            variable=self.var_filtro,
+                            command=self._reaplicar).pack(side="right",
+                                                          padx=(8, 0))
+        tk.Label(topo, text="Mostrar:", bg=COR_CARTAO, fg=COR_MUDO,
+                 font=fonte(T_LEGENDA)).pack(side="right")
 
         caixa = Superficie(corpo, cor_fora=COR_CARTAO,
                            contorno=COR_BORDA_CAMPO, raio=10, padding=(4, 4))
@@ -140,25 +159,41 @@ class RevisarSugestoes(tk.Toplevel):
         }[motivo]
         quantos = sum(1 for _i, c in self.itens
                       if motivo_da_sugestao(c) == motivo)
-        quadro = tk.Frame(self.lista, bg=COR_CARTAO_FRACO)
+        quadro = tk.Frame(self.lista, bg=COR_CARTAO_FRACO, cursor="hand2")
         quadro.grid(row=linha, column=0, columnspan=4, sticky="we",
                     pady=(0 if linha == 0 else 8, 2))
+        # Clicar no titulo abre e fecha o grupo: sao dois tipos de conferencia
+        # diferentes, e quem esta num nao precisa rolar o outro.
+        self._aberto[motivo] = True
+        seta = tk.Label(quadro, text="▾", bg=COR_CARTAO_FRACO, fg=COR_TITULO,
+                        font=fonte(T_LEGENDA, True))
+        seta.pack(side="left", padx=(8, 4), pady=4)
+        self._setas[motivo] = seta
         tk.Label(quadro, text="{} ({})".format(motivo.capitalize(), quantos),
                  bg=COR_CARTAO_FRACO, fg=COR_TITULO,
-                 font=fonte(T_LEGENDA, True)).pack(side="left", padx=(8, 6),
+                 font=fonte(T_LEGENDA, True)).pack(side="left", padx=(0, 6),
                                                    pady=4)
         tk.Label(quadro, text=explicacao, bg=COR_CARTAO_FRACO, fg=COR_DICA,
                  font=fonte(T_MINI)).pack(side="left", pady=4)
+        for alvo in (quadro,) + tuple(quadro.winfo_children()):
+            alvo.bind("<Button-1>", lambda _e, m=motivo: self._abrir_fechar(m))
         return linha + 1
 
     def _linha(self, linha: int, indice: int, comparacao, motivo: str) -> int:
         folha = comparacao.linha
         sisprev = comparacao.sugerido
-        marca = tk.Checkbutton(
-            self.lista, variable=self.marcas[indice], bg=COR_CARTAO,
-            activebackground=COR_CARTAO, highlightthickness=0, bd=0,
-            cursor="hand2", command=self._contar)
-        marca.grid(row=linha, column=0, sticky="n", padx=(4, 6), pady=(6, 0))
+        # O mesmo check da tabela da folha -- ver `caixa_de_marcar`.
+        variavel = self.marcas[indice]
+        marca = tk.Label(self.lista, bg=COR_CARTAO, cursor="hand2",
+                         image=self._img_marcado if variavel.get()
+                         else self._img_desmarcado)
+        marca.bind("<Button-1>", lambda _e, i=indice: self._alternar(i))
+        variavel.trace_add("write", lambda *_a, m=marca, v=variavel:
+                           m.configure(image=self._img_marcado if v.get()
+                                       else self._img_desmarcado))
+        marca.grid(row=linha, column=0, sticky="n", padx=(6, 8), pady=(8, 0))
+        widgets: List[tk.Widget] = [marca]
+        self._grupo[indice] = motivo
 
         # O que difere vai em amarelo: e para onde o olho tem de ir.
         destaque_nome = motivo == MESMA_ADMISSAO
@@ -173,19 +208,29 @@ class RevisarSugestoes(tk.Toplevel):
             tk.Label(bloco, text="{}  ·  {}".format(rotulo, codigo),
                      bg=COR_CARTAO, fg=COR_DICA, font=fonte(T_MINI),
                      anchor="w").pack(anchor="w")
-            tk.Label(bloco, text=nome, bg=COR_CARTAO,
-                     fg=COR_ATENCAO if destaque_nome else COR_TEXTO,
-                     font=fonte(T_LEGENDA, True), anchor="w").pack(anchor="w")
+            # O nome COPIA, e nao marca: e para colar na busca do SISPREVWEB.
+            rotulo_nome = tk.Label(
+                bloco, text=nome, bg=COR_CARTAO,
+                fg=COR_ATENCAO if destaque_nome else COR_TEXTO,
+                font=fonte(T_LEGENDA, True), anchor="w", cursor="hand2")
+            rotulo_nome.pack(anchor="w")
+            rotulo_nome.bind("<Button-1>",
+                             lambda _e, n=nome: self._copiar(n))
             tk.Label(bloco, text="admissão {}".format(admissao),
                      bg=COR_CARTAO,
                      fg=COR_DICA if destaque_nome else COR_ATENCAO,
                      font=fonte(T_MINI), anchor="w").pack(anchor="w")
             for alvo in (bloco,) + tuple(bloco.winfo_children()):
-                alvo.bind("<Button-1>", lambda _e, i=indice: self._alternar(i))
-        tk.Label(self.lista, text="→", bg=COR_CARTAO, fg=COR_DICA,
-                 font=fonte(T_LEGENDA)).grid(row=linha, column=2, padx=10)
-        tk.Frame(self.lista, bg=COR_BORDA, height=1).grid(
-            row=linha + 1, column=0, columnspan=4, sticky="we")
+                if alvo is not rotulo_nome:
+                    alvo.bind("<Button-1>",
+                              lambda _e, i=indice: self._alternar(i))
+            widgets.append(bloco)
+        seta = tk.Label(self.lista, text="→", bg=COR_CARTAO, fg=COR_DICA,
+                        font=fonte(T_LEGENDA))
+        seta.grid(row=linha, column=2, padx=10)
+        divisa = tk.Frame(self.lista, bg=COR_BORDA, height=1)
+        divisa.grid(row=linha + 1, column=0, columnspan=4, sticky="we")
+        self._widgets[indice] = widgets + [seta, divisa]
         return linha + 2
 
     # ------------------------------------------------------------------ #
@@ -195,8 +240,40 @@ class RevisarSugestoes(tk.Toplevel):
         self._contar()
 
     def _marcar_todas(self, valor: bool) -> None:
-        for marca in self.marcas.values():
-            marca.set(valor)
+        """Marca so as que estao a vista: com um grupo fechado ou um filtro,
+        "marcar todas" nao alcanca o que nao se ve."""
+        for indice, marca in self.marcas.items():
+            if self._visivel(indice):
+                marca.set(valor)
+        self._contar()
+
+    def _copiar(self, texto: str) -> None:
+        self.clipboard_clear()
+        self.clipboard_append(texto)
+        self.update()
+        self.var_contagem.set("Copiado: {}".format(texto))
+
+    def _abrir_fechar(self, motivo: str) -> None:
+        self._aberto[motivo] = not self._aberto[motivo]
+        self._setas[motivo].configure(text="▾" if self._aberto[motivo] else "▸")
+        self._reaplicar()
+
+    def _visivel(self, indice: int) -> bool:
+        if not self._aberto.get(self._grupo[indice], True):
+            return False
+        filtro = self.var_filtro.get()
+        marcada = self.marcas[indice].get()
+        return filtro == "todas" or (filtro == "sim") == marcada
+
+    def _reaplicar(self) -> None:
+        for indice, widgets in self._widgets.items():
+            mostrar = self._visivel(indice)
+            for widget in widgets:
+                if mostrar:
+                    widget.grid()
+                else:
+                    widget.grid_remove()
+        self.tela.yview_moveto(0)
         self._contar()
 
     def _contar(self) -> None:

@@ -400,6 +400,10 @@ class Janela(tk.Frame):
         self._secao("FLUXO")
         self._item("folha", "Arrecadação", "nenhuma folha lida", "1",
                    glifo="diario")
+        self._item("validacao", "Validação", "o que entrou no SISPREVWEB",
+                   "2", glifo="conferir")
+        self._item("resumo", "Resumo", "para mandar ao cliente", "3",
+                   glifo="grafico")
         self._secao("CADASTRO")
         self._item("municipios", "Municípios", "regras de cada um",
                    glifo="conferir")
@@ -652,8 +656,12 @@ class Janela(tk.Frame):
         from .tela_fontes import TelaFontes
         from .tela_inicio import TelaInicio
         from .tela_municipios import TelaMunicipios
+        from .tela_resumo import TelaResumo
+        from .tela_validacao import TelaValidacao
 
         for chave, classe in (("inicio", TelaInicio), ("folha", TelaFolha),
+                              ("validacao", TelaValidacao),
+                              ("resumo", TelaResumo),
                               ("municipios", TelaMunicipios),
                               ("fontes", TelaFontes),
                               ("exportacoes", TelaExportacoes)):
@@ -826,6 +834,20 @@ class Janela(tk.Frame):
     def atualizar_barra(self) -> None:
         """Reflete na barra lateral o que ja esta disponivel."""
         self.itens["folha"].definir_estado(True, self.estado.descrever_folha())
+        # Validacao e Resumo dizem se ja ha export do Lancamento anexado: e o
+        # que falta para as duas funcionarem.
+        if self.estado.lancamentos_sisprev is not None:
+            from arrecadacao.validacao import competencia_dos_lancamentos
+            competencia = competencia_dos_lancamentos(
+                self.estado.lancamentos_sisprev[1]) or "export anexado"
+            self.itens["validacao"].definir_estado(
+                True, "Lançamento {}".format(competencia))
+            self.itens["resumo"].definir_estado(
+                True, "Lançamento {}".format(competencia))
+        else:
+            self.itens["validacao"].definir_estado(
+                True, "o que entrou no SISPREVWEB")
+            self.itens["resumo"].definir_estado(True, "para mandar ao cliente")
 
         # Quantas fontes desta folha ainda estao sem codigo. E o unico aviso
         # que aparece de QUALQUER tela: quem esta conferindo a tabela precisa

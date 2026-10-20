@@ -51,9 +51,28 @@ RE_MES_ANO = re.compile(r"^M.s\s*/\s*Ano$", re.IGNORECASE)
 RE_TIPO = re.compile(r"Data\s+Pagamento:.*[-\u2013]\s*(.+?)\s*$", re.IGNORECASE)
 
 # --- grupo de fonte pagadora -------------------------------------------- #
-# "Divisao: 000002 - EXECUTIVO MUNICIPAL". Na folha da camara nao existe
-# nenhuma: a folha inteira e de uma fonte so.
-RE_DIVISAO = re.compile(r"^Divis.o:\s*(\d+)\s*[-\u2013]\s*(.+)$", re.IGNORECASE)
+# A folha agrupa em ate tres niveis, e a FONTE e o mais fino que ela trouxer:
+#
+#     Divisao:    000006 - SECRETARIA MUN DE EDUCACAO E CULTURA ...
+#     Subdivisao: 006003 - FUNDO DE MANUT.EDUC BASICA- FUNDEB 70%
+#     Unidade:    061010 - FUNDEB 70 % - EFETIVOS        <- a fonte
+#
+# Colniza traz os tres, e a Unidade e exatamente o nome da fonte no
+# SISPREVWEB ("061010 - FUNDEB 70 % - EFETIVOS", codigo 2372). Primavera so
+# traz Divisao, e ali a Divisao e a fonte. Comodoro so traz Unidade.
+#
+# Ja foi lido so a Divisao -- e em Colniza 09/2026 a secretaria virou fonte:
+# "006 - SECRETARIA DE EDUCACAO" casou pelo numero com "06 - APOIO
+# ADMINISTRATIVO EDUCACIONAL", e as 387 linhas da Educacao foram para uma
+# fonte so, quando o cadastro as divide em tres (FUNDEB 70, FUNDEB infantil,
+# 25%). Quatro secretarias foram recusadas inteiras e as outras entraram na
+# fonte errada. Em Comodoro, sem Divisao nenhuma, a fonte nem era lida.
+#
+# Na folha da camara nao existe nivel nenhum: a folha inteira e de uma fonte.
+RE_NIVEL = re.compile(
+    r"^(Divis.o|Subdivis.o|Unidade):\s*(\d+)\s*[-\u2013]\s*(.+)$",
+    re.IGNORECASE)
+NIVEL = {"divis": 1, "subdi": 2, "unida": 3}
 
 # --- bloco do servidor -------------------------------------------------- #
 # "1100-1 ANA CLAUDIA HAGEMANN LOPES 02/03/2000 0008 - AUXILIAR BIBLIOTECARIO"
@@ -181,6 +200,9 @@ def _ler_segurados(linhas: Sequence[tuple]) -> List[Segurado]:
     declaradas: Dict[int, Optional[float]] = {}
     atual: Optional[Segurado] = None
     fonte_corrente: Optional[FonteDaFolha] = None
+    # A secretaria (a Divisao), para a coluna "unidade" -- e o que quem
+    # confere reconhece; a fonte, o nivel mais fino, vai na coluna da fonte.
+    divisao_corrente = ""
     tipo_corrente = ""
     cargo_solto = ""
     nome_solto = ""
@@ -200,10 +222,16 @@ def _ler_segurados(linhas: Sequence[tuple]) -> List[Segurado]:
             tipo_corrente = achado.group(1).strip().title()
             continue
 
-        achado = RE_DIVISAO.match(texto)
+        achado = RE_NIVEL.match(texto)
         if achado:
-            fonte_corrente = FonteDaFolha(numero=int(achado.group(1)),
-                                          nome=achado.group(2).strip(),
+            nivel = NIVEL[achado.group(1).lower()[:5]]
+            # O PDF desce sempre na ordem Divisao -> Subdivisao -> Unidade,
+            # entao o ultimo nivel lido e o mais fino do grupo atual. Uma
+            # Divisao nova sem Unidade embaixo (Primavera) fica sendo a fonte.
+            if nivel == 1:
+                divisao_corrente = achado.group(3).strip()
+            fonte_corrente = FonteDaFolha(numero=int(achado.group(2)),
+                                          nome=achado.group(3).strip(),
                                           bruto=texto)
             continue
 
@@ -239,7 +267,8 @@ def _ler_segurados(linhas: Sequence[tuple]) -> List[Segurado]:
 
         achado = RE_SERVIDOR.match(texto)
         if achado:
-            atual = _abrir_servidor(achado, pagina, fonte_corrente)
+            atual = _abrir_servidor(achado, pagina, fonte_corrente,
+                                    divisao_corrente)
             atual.tipo_folha = tipo_corrente
             if not atual.cargo:
                 atual.cargo = cargo_solto
@@ -317,8 +346,8 @@ def _absorver_ferias(segurados: List[Segurado],
     return [s for s in segurados if id(s) not in absorvidos]
 
 
-def _abrir_servidor(achado, pagina: int,
-                    fonte: Optional[FonteDaFolha]) -> Segurado:
+def _abrir_servidor(achado, pagina: int, fonte: Optional[FonteDaFolha],
+                    divisao: str = "") -> Segurado:
     """Matricula, nome, admissao e cargo da linha de abertura do bloco."""
     matricula = achado.group(1) or achado.group(3)
     resto = (achado.group(2) or achado.group(4)).strip()
@@ -342,7 +371,7 @@ def _abrir_servidor(achado, pagina: int,
         cargo=cargo,
         fonte=fonte,
         estrutura=fonte.chave if fonte else "",
-        unidade=fonte.nome if fonte else "",
+        unidade=divisao or (fonte.nome if fonte else ""),
         pagina=pagina,
     )
 

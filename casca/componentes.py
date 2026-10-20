@@ -275,6 +275,28 @@ class Superficie(tk.Frame):
         self.redesenhar()
 
 
+def caixa_de_marcar(dono: tk.Misc, marcada: bool) -> tk.PhotoImage:
+    """O check da tabela da folha e da revisao de sugestoes, pixel a pixel.
+
+    O Treeview nao aceita widget na celula, so imagem -- e o "☑" de texto
+    saia do tamanho da letra, pequeno demais para acertar o clique. A revisao
+    usa a mesma imagem, para os dois checks serem um so.
+    """
+    lado = 16
+    imagem = tk.PhotoImage(master=dono, width=lado, height=lado)
+    imagem.put(COR_BORDA_CAMPO if not marcada else COR_PRIMARIA,
+               to=(0, 0, lado, lado))
+    imagem.put("#ffffff" if not marcada else COR_PRIMARIA,
+               to=(1, 1, lado - 1, lado - 1))
+    if marcada:
+        # o "v" do check, em duas pernas de 2 pixels de espessura
+        for i in range(4):
+            imagem.put("#ffffff", to=(3 + i, 7 + i, 5 + i, 9 + i))
+        for i in range(7):
+            imagem.put("#ffffff", to=(6 + i, 10 - i, 8 + i, 12 - i))
+    return imagem
+
+
 def chip(dono: tk.Misc, glifo: str, lado: int = 40,
          cor: str = COR_PRIMARIA, cor_glifo: str = COR_SOBRE_PRIMARIA,
          cor_fora: str = COR_CARTAO, raio: int = RAIO_ITEM,
@@ -312,8 +334,8 @@ class Cartao(Superficie):
             self.cabeca.pack(fill="x")
 
             if glifo:
-                chip(self.cabeca, icone(glifo), cor_fora=self.cor).pack(
-                    side="left", padx=(0, 12))
+                chip(self.cabeca, icone(glifo), cor_fora=self.cor, lado=32,
+                     tamanho=15).pack(side="left", padx=(0, 10))
 
             self.acoes = tk.Frame(self.cabeca, bg=self.cor)
             self.acoes.pack(side="right")
@@ -387,7 +409,7 @@ class Metrica(Superficie):
 
     def __init__(self, dono: tk.Misc, valor: str = "-", rotulo: str = "",
                  cor_acento: str = COR_PRIMARIA, **kwargs) -> None:
-        super().__init__(dono, padding=(18, 16), **kwargs)
+        super().__init__(dono, padding=(16, 10), **kwargs)
         self._acento = cor_acento
         self.var_valor = tk.StringVar(value=valor)
         self.var_rotulo = tk.StringVar(value=rotulo)
