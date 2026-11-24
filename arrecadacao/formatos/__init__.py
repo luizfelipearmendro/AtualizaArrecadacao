@@ -26,13 +26,13 @@ from __future__ import annotations
 
 from typing import List, Optional, Sequence
 
-from . import (agili, arfolha, betha, betha_extrato, centi, duralex,
-               fastreport, fiorilli)
+from . import (agili, agili_patronal, arfolha, betha, betha_extrato, centi,
+               duralex, fastreport, fiorilli)
 
 # A ordem nao importa para a escolha (vence a pontuacao), so para a mensagem
 # que a tela mostra quando nenhum reconhece o arquivo.
-LEITORES = (agili, arfolha, betha, betha_extrato, centi, duralex, fastreport,
-            fiorilli)
+LEITORES = (agili, agili_patronal, arfolha, betha, betha_extrato, centi,
+            duralex, fastreport, fiorilli)
 
 
 def reconhecer(linhas: Sequence[tuple]):

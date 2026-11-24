@@ -279,6 +279,68 @@ def gravar_resumo_pdf(lancamentos: Sequence[Lancamento], destino: Path,
     return destino
 
 
+# ---------------------------------------------------------------------- #
+# fontes a cadastrar
+# ---------------------------------------------------------------------- #
+def o_que_fazer(correspondencia) -> str:
+    """O passo no SISPREVWEB para a fonte que ficou sem codigo."""
+    from .fontes import AMBIGUO, SEM_GRUPO
+    if correspondencia.sugerido is not None:
+        return "Confirmar no programa a sugestão {} — ou cadastrar a fonte " \
+            "no SISPREVWEB, se não for ela".format(
+                correspondencia.sugerido.codigo)
+    if correspondencia.origem == AMBIGUO:
+        return "Já existe mais de uma fonte com este número no SISPREVWEB: " \
+            "escolher a certa no programa (e inativar a duplicada)"
+    if correspondencia.origem == SEM_GRUPO:
+        return "A folha não diz a fonte: escolher no programa"
+    return "Cadastrar no SISPREVWEB com o nome da coluna A"
+
+
+def gravar_fontes_sem_codigo_xlsx(grupos, destino: Path, municipio: str = "",
+                                  competencia: str = "") -> Path:
+    """Uma linha por fonte da folha sem codigo, com o que fazer.
+
+    `grupos` e [(Correspondencia, [linhas da folha nessa fonte])]. O nome vai
+    como esta no PDF, para ser copiado e colado no cadastro do SISPREVWEB:
+    fonte cadastrada antes da importacao nao vira "fonte sem codigo".
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    from .fontes import AMBIGUO
+
+    destino = Path(destino)
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    livro = Workbook()
+    aba = livro.active
+    aba.title = "Fontes sem código"
+    _cabecalho(aba, (("Fonte na folha", 60), ("Situação", 34),
+                     ("O que fazer", 70), ("Segurados", 10),
+                     ("Remun. Contrib.", 15), ("Contrib. Segur.", 15),
+                     ("Fontes parecidas no SISPREVWEB", 70)))
+    for numero, (correspondencia, linhas) in enumerate(grupos, start=2):
+        # Nos outros casos os candidatos sao o catalogo inteiro.
+        parecidas = "; ".join("{} — {}".format(f.codigo, f.nome) for f in (
+            [correspondencia.sugerido] if correspondencia.sugerido is not None
+            else correspondencia.candidatos if correspondencia.origem == AMBIGUO
+            else []))
+        valores = (correspondencia.fonte.rotulo, correspondencia.origem,
+                   o_que_fazer(correspondencia), len(linhas),
+                   round(sum(l.base for l in linhas), 2),
+                   round(sum(l.segurado for l in linhas), 2), parecidas)
+        for coluna, valor in enumerate(valores, start=1):
+            aba.cell(row=numero, column=coluna, value=valor)
+        _dinheiro(aba, numero, (5, 6))
+    rodape = len(grupos) + 3
+    aba.cell(row=rodape, column=1,
+             value="{}  ·  competência {}".format(municipio, competencia)
+             ).font = Font(italic=True)
+    fonte_tamanho_10(livro)
+    livro.save(destino)
+    return destino
+
+
 def nome_do_resumo(municipio: str, lancamentos: Sequence[Lancamento],
                    extensao: str) -> str:
     from .exportacao import _em_palavras

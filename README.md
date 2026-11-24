@@ -175,6 +175,19 @@ responde:
 * **número que não existe no catálogo** (5). Fonte nova, ainda não exportada —
   aí é campo de digitar.
 
+As fontes cadastradas de 2026 em diante levam no SISPREVWEB a linha da folha
+**inteira**, com a ordem do grupo: `238 - 600 - 2067 - SAMU EFETIVOS
+1.600.000.603`. Pelo número (600) não havia candidato, porque o catálogo lê
+238. Por isso, antes do número, o programa procura no catálogo o nome igual à
+linha inteira da folha. A coluna *Nome fonte* também mostra a linha como está
+no PDF (`160 - 421 - 2072- ...`).
+
+O botão **FONTES SEM CÓDIGO** (na barra de exportação) gera um `.xlsx` com as
+fontes da folha que ficaram sem código: o nome como está no PDF, para colar no
+cadastro do SISPREVWEB, o motivo, o que fazer, e quantos segurados e quanto
+dinheiro dependem dela. Cadastrada antes da importação, a fonte não volta como
+*fonte sem código*.
+
 As duas escolhas ficam gravadas por município e são reaproveitadas na folha
 seguinte. Tudo mora em
 `%LOCALAPPDATA%\AtualizaArrecadacao\catalogo_fontes.json`, e não ao lado do
@@ -214,7 +227,8 @@ linha é a do ajuste mais grave. O ajuste é feito ali:
 
 * **duplo clique na fonte**: o catálogo, com a sugestão no topo. Se o grupo da
   folha estava sem código, a escolha vale para o grupo e fica gravada; se já
-  tinha, vale só para aquela linha;
+  tinha, vale só para aquela linha. Quando outras linhas da mesma fonte têm o
+  mesmo aviso (`fonte ≠ cadastro: ...`), o programa pergunta se aplica a todas;
 * **duplo clique na matrícula**: a sugestão do SISPREVWEB (aceitar fica
   gravado), a da folha, ou o que for digitado;
 * **clique em Importar**: tira ou põe a linha no arquivo. Quem não contribuiu
@@ -263,6 +277,11 @@ conferir decidir. Trocar a matrícula pela de outra pessoa não dá erro na
 importação: credita a contribuição no segurado errado. Também vira sugestão o
 **nome idêntico com outra admissão**, quando há um cadastro só com esse nome
 (a folha diz a posse, `05/09/2003`, e o SISPREVWEB a nomeação, `28/08/2003`).
+
+Sugestão com o **mesmo código que a matrícula da folha** não é sugestão: o
+arquivo já vai com o código certo. Ela conta como *Matrícula encontrada*, e a
+planilha diz como o nome e a admissão estão no SISPREVWEB. Em Aripuanã 10/2026
+eram 44 das 45 sugestões.
 
 **REVISAR SUGESTÕES** abre a folha e o SISPREVWEB lado a lado, agrupados por
 motivo (cada grupo abre e fecha), com o que difere em destaque, um filtro de
@@ -439,6 +458,7 @@ comum. São 29 municípios: o programa lê **uma família de formatos**, não um
 | formato | município de referência | o que abre o bloco |
 |---|---|---|
 | `Agili` | Aripuanã, Paranatinga | `Funcionário(a)  Matrícula  Situação …` |
+| `Agili (Patronal RPPS)` | Nova Olímpia (10/2026) | `Patronal RPPS - 10/2026`, e uma linha por servidor: `Mensal FULANA 783 CPF admissão R$ base 14,00 R$ desconto …` |
 | `ARFolha` | Rosário Oeste, Barra do Garças, Confresa, Chapada dos Guimarães, Tabaporã, Santo Antônio de Leverger | `SERVIDOR: 9999.1 - FULANA …` |
 | `Betha` | São José do Povo | `Func.: 9999 - FULANA … CPF: …` |
 | `Betha (extrato mensal)` | Vila Bela da Santíssima Trindade, Santa Terezinha | `Código  Funcionário  C.P.F.  Admissão …` |
@@ -446,6 +466,14 @@ comum. São 29 municípios: o programa lê **uma família de formatos**, não um
 | `Dura Lex` | Nova Olímpia | `Código  Nome  Tipo  Func.  Função …` |
 | `FastReport` | Campinápolis (prefeitura) | `Funcionário: 1990 - FULANA C.P.F.: …` |
 | `Fiorilli` | Primavera do Leste, Colniza, Comodoro, Jauru, Cocalinho | `Matrícula  Nome do Trabalhador  Admissão …` |
+
+O **Agili (Patronal RPPS)** não é a folha: é o relatório da previdência do
+mesmo sistema, que já traz a base e o desconto de cada servidor. A coluna
+*Cálculo* (`Mensal`, `Rescisão`, `13º salário`) diz de que folha é a linha, e
+o 13º sai na competência 13. A fonte é o grupo de quatro dígitos
+(`3327 - GABINETE SEC. ADMINISTRAÇÃO / EFETIVO`), e a página RESUMO, depois do
+total geral, não é lida. Nova Olímpia 10/2026: 363 linhas, 2.177.627,72 de base
+e 304.867,52 de desconto no mensal; 23 linhas no 13º — os totais do próprio PDF.
 
 No **Fiorilli** a fonte pagadora é o nível **mais fino** do agrupamento que a
 folha trouxer — `Unidade`, senão `Subdivisão`, senão `Divisão`:

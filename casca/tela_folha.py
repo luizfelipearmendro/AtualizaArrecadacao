@@ -43,7 +43,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -929,6 +929,24 @@ class TelaFolha(Tela):
         self.btn_planilha = Botao(principal, text="PLANILHA DE CONFERÊNCIA",
                                   command=lambda: self._exportar("planilha"))
         self.btn_planilha.pack(side="right")
+        # Para cadastrar no SISPREVWEB ANTES de importar o que falta.
+        self.btn_fontes_sem_codigo = Botao(
+            principal, text="FONTES SEM CÓDIGO",
+            command=lambda: self._exportar("fontes"), state="disabled")
+        self.btn_fontes_sem_codigo.pack(side="right", padx=(0, 8))
+
+    def _fontes_sem_codigo(self) -> List[Tuple[Any, List[Any]]]:
+        """[(correspondencia, linhas)] das fontes da folha ainda sem codigo."""
+        grupos = []
+        for correspondencia in self.estado.correspondencias.values():
+            if correspondencia.resolvida:
+                continue
+            nome = str(correspondencia.fonte)
+            linhas = [l for l in self.linhas
+                      if l.fonte_nome == nome and not l.fonte]
+            if linhas:
+                grupos.append((correspondencia, linhas))
+        return sorted(grupos, key=lambda g: g[0].fonte.rotulo)
 
     def _montar_sisprev(self) -> None:
         """O cadastro de segurados do SISPREVWEB, logo abaixo da competencia.
@@ -1191,14 +1209,20 @@ class TelaFolha(Tela):
                                tags=etiquetas, values=valores)
         self.ordenador.reaplicar()
         self._atualizar_contagem()
+        sem_codigo = len(self._fontes_sem_codigo())
+        self.btn_fontes_sem_codigo.configure(
+            text="FONTES SEM CÓDIGO ({})".format(sem_codigo) if sem_codigo
+            else "FONTES SEM CÓDIGO",
+            state="normal" if sem_codigo else "disabled")
 
     def _conteudo_da_linha(self, linha, comparacao, por_fonte, repetidos):
         """(imagem do check, etiquetas, valores) de uma linha da tabela."""
         from arrecadacao.ajustes import chave, diagnosticar, importa, \
             matricula_final
         ajuste = self.ajustes.get(chave(linha))
-        achados = diagnosticar(linha, por_fonte.get(linha.fonte_nome),
-                               comparacao, ajuste, repetidos)
+        correspondencia = por_fonte.get(linha.fonte_nome)
+        achados = diagnosticar(linha, correspondencia, comparacao, ajuste,
+                               repetidos)
         texto = "; ".join(texto for _tipo, texto in achados)
         etiquetas = [achados[0][0]] if achados else []
         antes = self.corrigidos.get(chave(linha))
@@ -1219,7 +1243,8 @@ class TelaFolha(Tela):
                     matricula_final(linha, comparacao, ajuste)),
                  linha.matricula, linha.nome,
                  "{}  ▾".format(linha.fonte or "—"),
-                 linha.fonte_nome or "—", linha.ano, linha.mes,
+                 correspondencia.fonte.rotulo if correspondencia
+                 else linha.fonte_nome or "—", linha.ano, linha.mes,
                  _moeda(linha.base), _moeda(linha.segurado),
                  _moeda(linha.patronal), linha.categoria,
                  linha.verbas or "—", linha.pagina))
@@ -1418,14 +1443,57 @@ class TelaFolha(Tela):
                     "" if gravou else " (só nesta sessão: o cadastro não pôde "
                     "ser gravado)"))
         else:
-            self._lembrar([linha])
-            ajuste = self.ajustes.setdefault(chave(linha), {})
-            if codigo == (correspondencia.codigo if correspondencia else ""):
-                ajuste.pop("fonte", None)
-            else:
-                ajuste["fonte"] = codigo
-            self.janela.status("Fonte {} só para {}.".format(codigo, linha.nome))
+            linhas = [linha]
+            aviso, iguais = self._mesma_situacao_de_fonte(linha)
+            if iguais and messagebox.askyesno(
+                    APP_NOME,
+                    "Outros {} segurado(s) da fonte {} estão na mesma "
+                    "situação:\n\n{}\n\nUsar a fonte {} para todos eles "
+                    "também?".format(len(iguais), linha.fonte_nome,
+                                     "\n".join(aviso), codigo)):
+                linhas += iguais
+            self._lembrar(linhas)
+            for alvo in linhas:
+                ajuste = self.ajustes.setdefault(chave(alvo), {})
+                if codigo == (correspondencia.codigo if correspondencia else ""):
+                    ajuste.pop("fonte", None)
+                else:
+                    ajuste["fonte"] = codigo
+            self.janela.status(
+                "Fonte {} só para {}.".format(codigo, linha.nome)
+                if len(linhas) == 1 else
+                "Fonte {} para {} segurados.".format(codigo, len(linhas)))
         self._remontar()
+
+    def _mesma_situacao_de_fonte(self, linha) -> Tuple[tuple, List[Any]]:
+        """(aviso, as outras linhas do grupo com o mesmo aviso, sem ajuste).
+
+        "fonte ≠ cadastro: 192 - 511 - 2098 ..." costuma vir em dez segurados
+        da mesma fonte, e corrigir um por um cansava. Linha sem aviso de fonte
+        nao puxa ninguem: trocar a fonte de UM segurado e escolha dele.
+        """
+        from arrecadacao.ajustes import (DIVERGE, FONTE_REPETIDA, chave,
+                                         diagnosticar)
+        comparacoes = self._comparacoes_por_linha()
+        por_fonte = {str(c.fonte): c for c in
+                     self.estado.correspondencias.values()}
+        repetidos = self._codigos_repetidos()
+
+        def aviso(l) -> tuple:
+            if (self.ajustes.get(chave(l)) or {}).get("fonte"):
+                return ()
+            return tuple(texto for tipo, texto in diagnosticar(
+                l, por_fonte.get(l.fonte_nome), comparacoes.get(id(l)),
+                self.ajustes.get(chave(l)), repetidos)
+                if tipo in (DIVERGE, FONTE_REPETIDA))
+
+        procurado = aviso(linha)
+        if not procurado:
+            return procurado, []
+        return procurado, [l for l in self.linhas
+                           if l is not linha
+                           and l.fonte_nome == linha.fonte_nome
+                           and aviso(l) == procurado]
 
     def _opcoes_matricula(self, linha) -> Dict[str, str]:
         """A sugestao do SISPREVWEB, a da folha, ou o que for digitado."""
@@ -1439,8 +1507,11 @@ class TelaFolha(Tela):
         if comparacao is not None and comparacao.codigo_sisprev:
             opcoes["{} (SISPREVWEB)".format(comparacao.codigo_sisprev)] = \
                 comparacao.codigo_sisprev
-        opcoes["{} (matrícula da folha)".format(linha.matricula)] = \
-            linha.matricula
+        # O mesmo numero duas vezes na lista ("1703 (SISPREVWEB)", "1703
+        # (matricula da folha)") parecia escolha, e nao era.
+        if linha.matricula not in opcoes.values():
+            opcoes["{} (matrícula da folha)".format(linha.matricula)] = \
+                linha.matricula
         return opcoes
 
     def _aplicar_matricula(self, linha, escolha: str) -> None:
@@ -1565,16 +1636,20 @@ class TelaFolha(Tela):
                 "\n\nO arquivo será salvo em:\n{}".format(pasta))
 
         comparacao = self.comparacao_sisprev
-        extensao = "xlsx" if tipo == "planilha" else "csv"
+        extensao = "xlsx" if tipo in ("planilha", "fontes") else "csv"
         base = exportacao.nome_sugerido(self.estado.folha, modelo, extensao,
                                         self.estado.municipio)[:-len(extensao) - 1]
         sufixo = {"final": "", "original": "_SemAlteracoes",
                   "planilha": "_ComparacaoSisprev" if comparacao is not None
-                  else ""}[tipo]
+                  else "", "fontes": "_FontesSemCodigo"}[tipo]
         titulo = {"final": "Arquivo final para importação",
                   "original": "Arquivo sem alterações",
                   "planilha": "Comparação SISPREVWEB × folha"
-                  if comparacao is not None else "Planilha de conferência"}[tipo]
+                  if comparacao is not None else "Planilha de conferência",
+                  "fontes": "Fontes sem código"}[tipo]
+        if tipo == "fontes":
+            grupos = self._fontes_sem_codigo()
+            linhas = [l for _c, ls in grupos for l in ls]
         destino = filedialog.asksaveasfilename(
             title=titulo, initialdir=str(pasta),
             initialfile="{}{}.{}".format(base, sufixo, extensao),
@@ -1585,7 +1660,12 @@ class TelaFolha(Tela):
             return
 
         try:
-            if tipo == "planilha" and comparacao is not None:
+            if tipo == "fontes":
+                from arrecadacao.relatorios import gravar_fontes_sem_codigo_xlsx
+                gravar_fontes_sem_codigo_xlsx(
+                    grupos, Path(destino), self.estado.municipio,
+                    str(self._competencia_escolhida() or ""))
+            elif tipo == "planilha" and comparacao is not None:
                 exportacao.gravar_comparacao_xlsx(
                     comparacao, Path(destino), self.estado.folha,
                     self.estado.municipio)

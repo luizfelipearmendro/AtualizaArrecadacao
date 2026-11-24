@@ -173,6 +173,15 @@ class FonteDaFolha:
         """Identifica a fonte entre folhas do mesmo municipio."""
         return "{}|{}".format(self.numero, normalizar(self.nome))
 
+    @property
+    def rotulo(self) -> str:
+        """Como esta no PDF: "160 - 421 - 2072- SAUDE ...", com a ordem do
+        grupo -- a tabela mostrava "421 - 2072- ..." e quem procurava a linha
+        na folha nao achava."""
+        if self.bruto and RE_FONTE_NA_FOLHA.match(self.bruto.strip()):
+            return self.bruto.strip()
+        return str(self)
+
     def __str__(self) -> str:
         if self.folha_inteira:
             return self.nome
@@ -353,6 +362,18 @@ class Cadastro:
 
         if not self.fontes_de(municipio):
             return Correspondencia(fonte=fonte, origem=SEM_CATALOGO)
+        # As fontes cadastradas de 2026 em diante, em Aripuana, levam a linha
+        # da folha INTEIRA, com a ordem do grupo: "238 - 600 - 2067 - SAMU
+        # EFETIVOS 1.600.000.603". Pelo numero (600) nao ha candidato -- o
+        # catalogo le 238 --, e a fonte saia "sem codigo" estando cadastrada.
+        if fonte.bruto:
+            linha_inteira = normalizar(fonte.bruto)
+            iguais = [f for f in self.fontes_de(municipio)
+                      if normalizar(f.nome) == linha_inteira]
+            if len(iguais) == 1:
+                return Correspondencia(fonte=fonte, codigo=iguais[0].codigo,
+                                       origem=POR_NOME,
+                                       candidatos=iguais + candidatos)
         if not candidatos:
             return Correspondencia(fonte=fonte, origem=AUSENTE)
 

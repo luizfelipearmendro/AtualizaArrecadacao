@@ -421,6 +421,28 @@ def comparar(linhas: Sequence[Linha], cadastro: Sequence[SeguradoSisprev],
             "{} - {}".format(sugerido.codigo, sugerido.nome) if sugerido
             else "", sugerido))
 
+    # A sugestao com o MESMO codigo que a matricula da folha nao e sugestao:
+    # o arquivo ja vai com o codigo certo, e "sugestao 3297" ao lado de
+    # "3297" na folha so confundia. O nome ou a admissao diferem um pouco --
+    # fica na observacao. Depois do casamento, como os aceites: um codigo que
+    # casou inteiro com outra linha vale mais.
+    for comparacao in resultado.comparacoes:
+        sugerido = comparacao.sugerido
+        if (comparacao.situacao != NAO_ENCONTRADO or sugerido is None
+                or sugerido.codigo in dono_do_codigo
+                or not _mesma_matricula(sugerido.codigo,
+                                        comparacao.linha.matricula)):
+            continue
+        dono_do_codigo[sugerido.codigo] = comparacao.linha
+        usados.add(sugerido.linha)
+        comparacao.situacao = ENCONTRADA
+        comparacao.codigo_sisprev = sugerido.codigo
+        comparacao.observacao = "a matrícula da folha é o código do " \
+            "SISPREVWEB; lá o cadastro é {}, admissão {}".format(
+                sugerido.nome, _texto_data(sugerido.admissao))
+        # Sem sugestao: senao ela iria para a revisao como pendente.
+        comparacao.sugerido, comparacao.sugestao = None, ""
+
     # Os aceites entram DEPOIS do casamento: um codigo que casou sozinho com
     # outra linha vale mais que um aceite de meses atras, e a ordem das linhas
     # na folha nao pode decidir isso.

@@ -39,12 +39,15 @@ def ler(caminho: str, progresso=None, formato: str = "") -> Folha:
 
     leitor = formatos.por_nome(formato) if formato else None
     if leitor is not None and not leitor.pontuar(linhas):
-        leitor = None
-        folha.avisos_de_leitura.append(
-            "O formato configurado para o município ({}) não reconhece {}; o "
-            "programa escolheu o formato sozinho.".format(
-                formato, Path(caminho).name))
-    if leitor is None:
+        leitor = formatos.reconhecer(linhas)
+        # "Agili (Patronal RPPS)" e outro relatorio do MESMO sistema: a regra
+        # que diz "Agili" nao estava errada, e o aviso so assustaria.
+        if leitor is None or not leitor.NOME.startswith(formato):
+            folha.avisos_de_leitura.append(
+                "O formato configurado para o município ({}) não reconhece "
+                "{}; o programa escolheu o formato sozinho.".format(
+                    formato, Path(caminho).name))
+    elif leitor is None:
         leitor = formatos.reconhecer(linhas)
     if leitor is not None:
         folha.formato = leitor.NOME
